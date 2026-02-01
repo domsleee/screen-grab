@@ -106,6 +106,10 @@ class SelectionView: NSView {
     private var dragStartArrowStart: CGPoint?
     private var dragStartArrowEnd: CGPoint?
 
+    // CALayer-based annotation rendering for smooth dragging
+    private var annotationLayers: [UUID: CAShapeLayer] = [:]
+    private var selectionHandleLayer: CAShapeLayer?
+
     private let annotationColor = NSColor.red.cgColor
     private let strokeWidth: CGFloat = 3.0
 
@@ -132,9 +136,17 @@ class SelectionView: NSView {
     private func setupView() {
         wantsLayer = true
         layer?.drawsAsynchronously = true
-        layer?.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull()]
+        // Disable implicit animations for immediate updates
+        layer?.actions = [
+            "contents": NSNull(),
+            "bounds": NSNull(),
+            "position": NSNull(),
+            "sublayers": NSNull(),
+            "transform": NSNull(),
+            "anchorPoint": NSNull()
+        ]
         canDrawSubviewsIntoLayer = true
-        layerContentsRedrawPolicy = .onSetNeedsDisplay
+        layerContentsRedrawPolicy = .duringViewResize
         createCrosshairCursor()
         setupTrackingArea()
         setupCoordLayer()
@@ -415,12 +427,17 @@ class SelectionView: NSView {
                         dragStartArrowEnd = arrow.endPoint
                     }
 
-                    needsDisplay = true
+                    CATransaction.begin()
+                    CATransaction.setDisableActions(true)
+                    updateSelectionHandlesLayer()
+                    CATransaction.commit()
                     return
                 }
             }
             // Clicked on nothing - deselect
             selectedAnnotation = nil
+            selectionHandleLayer?.removeFromSuperlayer()
+            selectionHandleLayer = nil
             needsDisplay = true
         case .regionSelect:
             selectionStart = point
@@ -440,6 +457,10 @@ class SelectionView: NSView {
 
         if isDraggingAnnotation, let selected = selectedAnnotation, let start = dragStartPoint {
             let delta = CGPoint(x: point.x - start.x, y: point.y - start.y)
+
+            // Disable implicit animations for immediate response
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
 
             if let arrow = selected as? ArrowAnnotation {
                 switch activeHandle {
@@ -500,13 +521,21 @@ class SelectionView: NSView {
                     break
                 }
             }
-            needsDisplay = true
+
+            // Update only the annotation layer, not the whole view
+            updateAnnotationLayer(for: selected)
+            updateSelectionHandlesLayer()
+
+            CATransaction.commit()
         } else if isDrawingAnnotation {
             annotationEnd = point
-            needsDisplay = true
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            updateDrawingPreviewLayer()
+            CATransaction.commit()
         } else if isSelecting {
             selectionEnd = point
-            needsDisplay = true
+            display()
         }
     }
 
@@ -519,8 +548,10 @@ class SelectionView: NSView {
             dragStartBounds = nil
             dragStartArrowStart = nil
             dragStartArrowEnd = nil
+            needsDisplay = true
         } else if isDrawingAnnotation, let start = annotationStart, let end = annotationEnd {
             isDrawingAnnotation = false
+            clearDrawingPreviewLayer()
 
             if currentDrawingTool == .arrow {
                 let distance = hypot(end.x - start.x, end.y - start.y)
@@ -530,6 +561,7 @@ class SelectionView: NSView {
                         color: annotationColor, strokeWidth: strokeWidth
                     )
                     annotations.append(annotation)
+                    syncAnnotationLayers()
                 }
             } else {
                 let rect = rectFromPoints(start, end)
@@ -538,12 +570,14 @@ class SelectionView: NSView {
                         bounds: rect, color: annotationColor, strokeWidth: strokeWidth
                     )
                     annotations.append(annotation)
+                    syncAnnotationLayers()
                 }
             }
 
             currentMode = .select
             annotationStart = nil
             annotationEnd = nil
+            needsDisplay = true
         } else if isSelecting, let start = selectionStart, let end = selectionEnd {
             isSelecting = false
             let rect = rectFromPoints(start, end)
@@ -599,49 +633,8 @@ class SelectionView: NSView {
             drawSizeLabel(for: rect)
         }
 
-        if let context = NSGraphicsContext.current?.cgContext {
-            for annotation in annotations {
-                annotation.draw(in: context)
-
-                // Draw selection handles if selected
-                if let selected = selectedAnnotation, annotation.id == selected.id {
-                    drawSelectionHandles(for: annotation, in: context)
-                }
-            }
-
-            if isDrawingAnnotation, let start = annotationStart, let end = annotationEnd {
-                context.setStrokeColor(annotationColor)
-                context.setLineWidth(strokeWidth)
-
-                if currentDrawingTool == .arrow {
-                    context.setFillColor(annotationColor)
-                    context.setLineCap(.round)
-                    context.move(to: start)
-                    context.addLine(to: end)
-                    context.strokePath()
-
-                    let angle = atan2(end.y - start.y, end.x - start.x)
-                    let arrowHeadLength: CGFloat = 20.0
-                    let arrowHeadAngle: CGFloat = .pi / 6
-                    let arrowPoint1 = CGPoint(
-                        x: end.x - arrowHeadLength * cos(angle + arrowHeadAngle),
-                        y: end.y - arrowHeadLength * sin(angle + arrowHeadAngle)
-                    )
-                    let arrowPoint2 = CGPoint(
-                        x: end.x - arrowHeadLength * cos(angle - arrowHeadAngle),
-                        y: end.y - arrowHeadLength * sin(angle - arrowHeadAngle)
-                    )
-                    context.move(to: end)
-                    context.addLine(to: arrowPoint1)
-                    context.addLine(to: arrowPoint2)
-                    context.closePath()
-                    context.fillPath()
-                } else {
-                    let rect = rectFromPoints(start, end)
-                    context.stroke(rect)
-                }
-            }
-        }
+        // Annotations are now drawn via CAShapeLayers for smooth dragging
+        // Selection handles are also drawn via CAShapeLayers
 
         drawInstructions()
     }
@@ -793,6 +786,178 @@ class SelectionView: NSView {
                 )
                 context.fill(handleRect)
                 context.stroke(handleRect)
+            }
+        }
+    }
+
+    // MARK: - CALayer-based Annotation Rendering
+
+    private func createAnnotationLayer(for annotation: any Annotation) -> CAShapeLayer {
+        let shapeLayer = CAShapeLayer()
+        shapeLayer.strokeColor = annotation.color
+        shapeLayer.fillColor = nil
+        shapeLayer.lineWidth = annotation.strokeWidth
+        shapeLayer.lineCap = .round
+        shapeLayer.lineJoin = .round
+        // Disable implicit animations
+        shapeLayer.actions = ["path": NSNull(), "position": NSNull(), "bounds": NSNull()]
+        updateLayerPath(shapeLayer, for: annotation)
+        return shapeLayer
+    }
+
+    private func updateLayerPath(_ shapeLayer: CAShapeLayer, for annotation: any Annotation) {
+        let path = CGMutablePath()
+
+        if let arrow = annotation as? ArrowAnnotation {
+            // Draw arrow line
+            path.move(to: arrow.startPoint)
+            path.addLine(to: arrow.endPoint)
+
+            // Draw arrow head
+            let angle = atan2(arrow.endPoint.y - arrow.startPoint.y, arrow.endPoint.x - arrow.startPoint.x)
+            let arrowHeadLength: CGFloat = 20.0
+            let arrowHeadAngle: CGFloat = .pi / 6
+
+            let arrowPoint1 = CGPoint(
+                x: arrow.endPoint.x - arrowHeadLength * cos(angle + arrowHeadAngle),
+                y: arrow.endPoint.y - arrowHeadLength * sin(angle + arrowHeadAngle)
+            )
+            let arrowPoint2 = CGPoint(
+                x: arrow.endPoint.x - arrowHeadLength * cos(angle - arrowHeadAngle),
+                y: arrow.endPoint.y - arrowHeadLength * sin(angle - arrowHeadAngle)
+            )
+            path.move(to: arrow.endPoint)
+            path.addLine(to: arrowPoint1)
+            path.move(to: arrow.endPoint)
+            path.addLine(to: arrowPoint2)
+
+            shapeLayer.fillColor = nil
+        } else {
+            // Rectangle
+            path.addRect(annotation.bounds)
+        }
+
+        shapeLayer.path = path
+    }
+
+    private func updateAnnotationLayer(for annotation: any Annotation) {
+        guard let shapeLayer = annotationLayers[annotation.id] else { return }
+        updateLayerPath(shapeLayer, for: annotation)
+    }
+
+    private func updateSelectionHandlesLayer() {
+        selectionHandleLayer?.removeFromSuperlayer()
+
+        guard let selected = selectedAnnotation else { return }
+
+        let handleLayer = CAShapeLayer()
+        handleLayer.fillColor = NSColor.systemBlue.cgColor
+        handleLayer.strokeColor = NSColor.white.cgColor
+        handleLayer.lineWidth = 1
+        handleLayer.actions = ["path": NSNull(), "position": NSNull()]
+
+        let path = CGMutablePath()
+        let handleSize: CGFloat = 8
+
+        if let arrow = selected as? ArrowAnnotation {
+            path.addEllipse(in: CGRect(
+                x: arrow.startPoint.x - handleSize/2,
+                y: arrow.startPoint.y - handleSize/2,
+                width: handleSize, height: handleSize
+            ))
+            path.addEllipse(in: CGRect(
+                x: arrow.endPoint.x - handleSize/2,
+                y: arrow.endPoint.y - handleSize/2,
+                width: handleSize, height: handleSize
+            ))
+        } else {
+            let bounds = selected.bounds
+            let corners = [
+                CGPoint(x: bounds.minX, y: bounds.minY),
+                CGPoint(x: bounds.maxX, y: bounds.minY),
+                CGPoint(x: bounds.minX, y: bounds.maxY),
+                CGPoint(x: bounds.maxX, y: bounds.maxY)
+            ]
+            for corner in corners {
+                path.addRect(CGRect(
+                    x: corner.x - handleSize/2,
+                    y: corner.y - handleSize/2,
+                    width: handleSize, height: handleSize
+                ))
+            }
+        }
+
+        handleLayer.path = path
+        layer?.addSublayer(handleLayer)
+        selectionHandleLayer = handleLayer
+    }
+
+    private var drawingPreviewLayer: CAShapeLayer?
+
+    private func updateDrawingPreviewLayer() {
+        if drawingPreviewLayer == nil {
+            let previewLayer = CAShapeLayer()
+            previewLayer.strokeColor = annotationColor
+            previewLayer.fillColor = nil
+            previewLayer.lineWidth = strokeWidth
+            previewLayer.lineCap = .round
+            previewLayer.actions = ["path": NSNull()]
+            layer?.addSublayer(previewLayer)
+            drawingPreviewLayer = previewLayer
+        }
+
+        guard let start = annotationStart, let end = annotationEnd else { return }
+
+        let path = CGMutablePath()
+        if currentDrawingTool == .arrow {
+            path.move(to: start)
+            path.addLine(to: end)
+
+            let angle = atan2(end.y - start.y, end.x - start.x)
+            let arrowHeadLength: CGFloat = 20.0
+            let arrowHeadAngle: CGFloat = .pi / 6
+            let arrowPoint1 = CGPoint(
+                x: end.x - arrowHeadLength * cos(angle + arrowHeadAngle),
+                y: end.y - arrowHeadLength * sin(angle + arrowHeadAngle)
+            )
+            let arrowPoint2 = CGPoint(
+                x: end.x - arrowHeadLength * cos(angle - arrowHeadAngle),
+                y: end.y - arrowHeadLength * sin(angle - arrowHeadAngle)
+            )
+            path.move(to: end)
+            path.addLine(to: arrowPoint1)
+            path.move(to: end)
+            path.addLine(to: arrowPoint2)
+        } else {
+            let rect = rectFromPoints(start, end)
+            path.addRect(rect)
+        }
+
+        drawingPreviewLayer?.path = path
+    }
+
+    private func clearDrawingPreviewLayer() {
+        drawingPreviewLayer?.removeFromSuperlayer()
+        drawingPreviewLayer = nil
+    }
+
+    private func syncAnnotationLayers() {
+        // Remove old layers
+        for (id, layer) in annotationLayers {
+            if !annotations.contains(where: { $0.id == id }) {
+                layer.removeFromSuperlayer()
+                annotationLayers.removeValue(forKey: id)
+            }
+        }
+
+        // Add/update layers for current annotations
+        for annotation in annotations {
+            if let existingLayer = annotationLayers[annotation.id] {
+                updateLayerPath(existingLayer, for: annotation)
+            } else {
+                let newLayer = createAnnotationLayer(for: annotation)
+                layer?.addSublayer(newLayer)
+                annotationLayers[annotation.id] = newLayer
             }
         }
     }

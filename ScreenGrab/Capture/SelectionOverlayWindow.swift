@@ -1,19 +1,21 @@
 import AppKit
+import QuartzCore
 
-class SelectionOverlayWindow: NSWindow {
+class SelectionOverlayWindow: NSPanel {
     var onSelectionComplete: ((CGRect, CGRect, [any Annotation]) -> Void)?
     var onCancel: (() -> Void)?
 
     private var screenFrame: CGRect = .zero
     private var selectionView: SelectionView?
 
+    // Allow becoming key to receive mouse events, but don't become main
     override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { true }
+    override var canBecomeMain: Bool { false }
 
     init(screen: NSScreen) {
         super.init(
             contentRect: screen.frame,
-            styleMask: .borderless,
+            styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
@@ -26,9 +28,9 @@ class SelectionOverlayWindow: NSWindow {
         self.ignoresMouseEvents = false
         self.acceptsMouseMovedEvents = true
         self.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-
-        // Disable window shadow for performance
+        self.hidesOnDeactivate = false
         self.hasShadow = false
+        self.isFloatingPanel = true
 
         let selectionView = SelectionView(frame: screen.frame)
         selectionView.onSelectionComplete = { [weak self] rect, annotations in
@@ -43,20 +45,21 @@ class SelectionOverlayWindow: NSWindow {
         self.contentView = selectionView
     }
 
-    override func makeKeyAndOrderFront(_ sender: Any?) {
-        super.makeKeyAndOrderFront(sender)
-        // Ensure view becomes first responder
-        if let view = selectionView {
-            makeFirstResponder(view)
-        }
+    func show() {
+        orderFrontRegardless()
+        makeKey()
+        selectionView?.setupMonitors()
+        selectionView?.setCrosshairCursor()
     }
 
-    func stopKeyMonitors() {
-        selectionView?.stopKeyMonitor()
+    func stopEventMonitors() {
+        selectionView?.stopMonitors()
+        selectionView?.resetCursor()
     }
 
     override func close() {
-        selectionView?.stopKeyMonitor()
+        selectionView?.stopMonitors()
+        selectionView?.resetCursor()
         selectionView?.onSelectionComplete = nil
         selectionView?.onCancel = nil
         super.close()
@@ -64,16 +67,15 @@ class SelectionOverlayWindow: NSWindow {
 }
 
 enum SelectionTool {
-    case select      // For region selection
-    case rectangle   // For drawing rectangles
-    case arrow       // For drawing arrows
+    case select
+    case rectangle
+    case arrow
 }
 
 class SelectionView: NSView {
     var onSelectionComplete: ((CGRect, [any Annotation]) -> Void)?
     var onCancel: (() -> Void)?
 
-    // Current tool mode
     private var currentTool: SelectionTool = .select
 
     // Region selection state
@@ -93,102 +95,154 @@ class SelectionView: NSView {
     private let annotationColor = NSColor.red.cgColor
     private let strokeWidth: CGFloat = 3.0
 
-    // Local event monitor for keyboard events
+    private var keyMonitor: Any?
     private var localKeyMonitor: Any?
-    private var globalKeyMonitor: Any?
+    private var crosshairCursor: NSCursor?
+    private var coordLayer: CATextLayer?
+    private var coordBgLayer: CALayer?
 
     override var acceptsFirstResponder: Bool { true }
     override var isOpaque: Bool { false }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        // Use layer-backed view for better performance
-        wantsLayer = true
-        layer?.drawsAsynchronously = true
-        // Disable implicit animations to reduce flicker
-        layer?.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull()]
-        canDrawSubviewsIntoLayer = true
-        layerContentsRedrawPolicy = .onSetNeedsDisplay
-        setupTrackingArea()
-        setupKeyMonitor()
-        // Hide system cursor - we draw our own
-        NSCursor.hide()
+        setupView()
     }
 
     required init?(coder: NSCoder) {
         super.init(coder: coder)
+        setupView()
+    }
+    
+    private func setupView() {
         wantsLayer = true
         layer?.drawsAsynchronously = true
         layer?.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull()]
+        canDrawSubviewsIntoLayer = true
+        layerContentsRedrawPolicy = .onSetNeedsDisplay
         setupTrackingArea()
-        setupKeyMonitor()
-        NSCursor.hide()
+        createCrosshairCursor()
+        setupCoordLayer()
+    }
+    
+    private func setupCoordLayer() {
+        // Background layer
+        let bg = CALayer()
+        bg.backgroundColor = NSColor.black.withAlphaComponent(0.7).cgColor
+        bg.cornerRadius = 3
+        bg.actions = ["position": NSNull(), "bounds": NSNull()]  // Disable animations
+        layer?.addSublayer(bg)
+        coordBgLayer = bg
+        
+        // Text layer
+        let text = CATextLayer()
+        text.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        text.fontSize = 11
+        text.foregroundColor = NSColor.white.cgColor
+        text.alignmentMode = .left
+        text.contentsScale = NSScreen.main?.backingScaleFactor ?? 2.0
+        text.actions = ["position": NSNull(), "bounds": NSNull(), "string": NSNull()]
+        layer?.addSublayer(text)
+        coordLayer = text
+    }
+    
+    private func updateCoordDisplay(at point: NSPoint) {
+        guard let textLayer = coordLayer, let bgLayer = coordBgLayer else { return }
+        
+        let coordText = "\(Int(point.x)), \(Int(point.y))"
+        textLayer.string = coordText
+        
+        // Calculate size
+        let font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        let attrs: [NSAttributedString.Key: Any] = [.font: font]
+        let textSize = (coordText as NSString).size(withAttributes: attrs)
+        
+        let padding: CGFloat = 4
+        let offsetX: CGFloat = 18
+        let offsetY: CGFloat = 12
+        
+        // Position layers (CALayer uses bottom-left origin like NSView)
+        let x = point.x + offsetX
+        let y = point.y - textSize.height - offsetY
+        
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        bgLayer.frame = CGRect(x: x - padding, y: y - padding/2, 
+                                width: textSize.width + padding * 2, height: textSize.height + padding)
+        textLayer.frame = CGRect(x: x, y: y, width: textSize.width + 10, height: textSize.height + 4)
+        CATransaction.commit()
     }
 
     deinit {
-        stopKeyMonitor()
-        NSCursor.unhide()
+        stopMonitors()
     }
-
-    func stopKeyMonitor() {
-        if let monitor = localKeyMonitor {
-            NSEvent.removeMonitor(monitor)
-            localKeyMonitor = nil
-        }
-        if let monitor = globalKeyMonitor {
-            NSEvent.removeMonitor(monitor)
-            globalKeyMonitor = nil
-        }
-        NSCursor.unhide()
+    
+    private func createCrosshairCursor() {
+        let size: CGFloat = 31  // Odd number for center pixel
+        let center = size / 2
+        let armLength: CGFloat = 13
+        let gap: CGFloat = 2
+        let lineWidth: CGFloat = 1.0
+        let outlineWidth: CGFloat = 3.0
+        
+        let image = NSImage(size: NSSize(width: size, height: size))
+        image.lockFocus()
+        
+        // Draw black outline
+        NSColor.black.setStroke()
+        let outline = NSBezierPath()
+        outline.lineWidth = outlineWidth
+        // Horizontal
+        outline.move(to: NSPoint(x: center - armLength, y: center))
+        outline.line(to: NSPoint(x: center - gap, y: center))
+        outline.move(to: NSPoint(x: center + gap, y: center))
+        outline.line(to: NSPoint(x: center + armLength, y: center))
+        // Vertical
+        outline.move(to: NSPoint(x: center, y: center - armLength))
+        outline.line(to: NSPoint(x: center, y: center - gap))
+        outline.move(to: NSPoint(x: center, y: center + gap))
+        outline.line(to: NSPoint(x: center, y: center + armLength))
+        outline.stroke()
+        
+        // Draw white line on top
+        NSColor.white.setStroke()
+        let inner = NSBezierPath()
+        inner.lineWidth = lineWidth
+        // Horizontal
+        inner.move(to: NSPoint(x: center - armLength, y: center))
+        inner.line(to: NSPoint(x: center - gap, y: center))
+        inner.move(to: NSPoint(x: center + gap, y: center))
+        inner.line(to: NSPoint(x: center + armLength, y: center))
+        // Vertical
+        inner.move(to: NSPoint(x: center, y: center - armLength))
+        inner.line(to: NSPoint(x: center, y: center - gap))
+        inner.move(to: NSPoint(x: center, y: center + gap))
+        inner.line(to: NSPoint(x: center, y: center + armLength))
+        inner.stroke()
+        
+        image.unlockFocus()
+        
+        crosshairCursor = NSCursor(image: image, hotSpot: NSPoint(x: center, y: center))
     }
-
-    private func setupKeyMonitor() {
-        // Local monitor handles events when app is focused (can consume them)
-        localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self = self else { return event }
-            return self.handleKeyEvent(event) ? nil : event
-        }
-
-        // Global monitor as fallback when app not focused (can't consume events)
-        globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self = self else { return }
-            _ = self.handleKeyEvent(event)
+    
+    func setCrosshairCursor() {
+        crosshairCursor?.set()
+    }
+    
+    func resetCursor() {
+        NSCursor.arrow.set()
+    }
+    
+    override func resetCursorRects() {
+        if let cursor = crosshairCursor {
+            addCursorRect(bounds, cursor: cursor)
         }
     }
-
-    private func handleKeyEvent(_ event: NSEvent) -> Bool {
-        switch event.keyCode {
-        case 53: // ESC - go back to select mode, or cancel if already in select
-            if currentTool != .select {
-                currentTool = .select
-                needsDisplay = true
-                return true
-            }
-            onCancel?()
-            return true
-        case 15: // R - Rectangle tool
-            currentTool = .rectangle
-            needsDisplay = true
-            return true
-        case 0: // A - Arrow tool
-            currentTool = .arrow
-            needsDisplay = true
-            return true
-        case 51: // Delete - remove last annotation
-            if !annotations.isEmpty {
-                annotations.removeLast()
-                needsDisplay = true
-            }
-            return true
-        default:
-            return false
-        }
-    }
-
+    
     private func setupTrackingArea() {
         let trackingArea = NSTrackingArea(
             rect: bounds,
-            options: [.activeAlways, .mouseMoved, .inVisibleRect],
+            options: [.activeAlways, .mouseMoved, .inVisibleRect, .cursorUpdate],
             owner: self,
             userInfo: nil
         )
@@ -197,7 +251,6 @@ class SelectionView: NSView {
     
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        // Set initial mouse position when view is added to window
         if let window = window {
             let screenPos = NSEvent.mouseLocation
             let windowPos = window.convertPoint(fromScreen: screenPos)
@@ -206,100 +259,185 @@ class SelectionView: NSView {
         }
     }
 
+    func setupMonitors() {
+        // Global keyboard monitor (works even when not focused)
+        keyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            self?.handleKeyEvent(event)
+        }
+        
+        // Local keyboard monitor (when focused)
+        localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            self?.handleKeyEvent(event)
+            return nil
+        }
+    }
+
+    func stopMonitors() {
+        if let monitor = keyMonitor {
+            NSEvent.removeMonitor(monitor)
+            keyMonitor = nil
+        }
+        if let monitor = localKeyMonitor {
+            NSEvent.removeMonitor(monitor)
+            localKeyMonitor = nil
+        }
+        NSCursor.unhide()
+    }
+
+    private func handleKeyEvent(_ event: NSEvent) {
+        switch event.keyCode {
+        case 53: // ESC
+            if currentTool != .select {
+                currentTool = .select
+                needsDisplay = true
+            } else {
+                onCancel?()
+            }
+        case 15: // R
+            currentTool = .rectangle
+            needsDisplay = true
+        case 0: // A
+            currentTool = .arrow
+            needsDisplay = true
+        case 51: // Delete
+            if !annotations.isEmpty {
+                annotations.removeLast()
+                needsDisplay = true
+            }
+        default:
+            break
+        }
+    }
+
+    // MARK: - Mouse Events (standard NSView)
+    
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+
+        if currentTool == .rectangle || currentTool == .arrow {
+            isDrawingAnnotation = true
+            currentDrawingTool = currentTool
+            annotationStart = point
+            annotationEnd = point
+        } else {
+            selectionStart = point
+            selectionEnd = point
+            isSelecting = true
+        }
+        needsDisplay = true
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+
+        if isDrawingAnnotation {
+            annotationEnd = point
+        } else if isSelecting {
+            selectionEnd = point
+        }
+        needsDisplay = true
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        currentMousePosition = convert(event.locationInWindow, from: nil)
+
+        if isDrawingAnnotation, let start = annotationStart, let end = annotationEnd {
+            isDrawingAnnotation = false
+
+            if currentDrawingTool == .arrow {
+                let distance = hypot(end.x - start.x, end.y - start.y)
+                if distance > 10 {
+                    let annotation = ArrowAnnotation(
+                        startPoint: start, endPoint: end,
+                        color: annotationColor, strokeWidth: strokeWidth
+                    )
+                    annotations.append(annotation)
+                }
+            } else {
+                let rect = rectFromPoints(start, end)
+                if rect.width > 5 && rect.height > 5 {
+                    let annotation = RectangleAnnotation(
+                        bounds: rect, color: annotationColor, strokeWidth: strokeWidth
+                    )
+                    annotations.append(annotation)
+                }
+            }
+
+            currentTool = .select
+            annotationStart = nil
+            annotationEnd = nil
+        } else if isSelecting, let start = selectionStart, let end = selectionEnd {
+            isSelecting = false
+            let rect = rectFromPoints(start, end)
+
+            if rect.width > 10 && rect.height > 10 {
+                onSelectionComplete?(rect, annotations)
+            }
+
+            selectionStart = nil
+            selectionEnd = nil
+        }
+        needsDisplay = true
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        currentMousePosition = convert(event.locationInWindow, from: nil)
+        // Only update the coord layer, don't redraw entire view
+        if let pos = currentMousePosition, !isSelecting && !isDrawingAnnotation {
+            updateCoordDisplay(at: pos)
+            coordLayer?.isHidden = false
+            coordBgLayer?.isHidden = false
+        }
+    }
+
+    // MARK: - Drawing
+
     override func draw(_ dirtyRect: NSRect) {
-        // Draw semi-transparent overlay - lighter than before
         NSColor.black.withAlphaComponent(0.15).setFill()
         bounds.fill()
         
-        // Draw small crosshair at mouse position (like macOS native)
-        if let mousePos = currentMousePosition, !isSelecting && !isDrawingAnnotation {
-            // Small crosshair with black outline for visibility
-            let size: CGFloat = 15  // Length of each arm
-            let gap: CGFloat = 2    // Gap at center
-            
-            // Draw black outline first (thicker), then white line on top
-            for (color, width) in [(NSColor.black, CGFloat(3)), (NSColor.white, CGFloat(1))] {
-                color.setStroke()
-                
-                let path = NSBezierPath()
-                // Left arm
-                path.move(to: NSPoint(x: mousePos.x - size, y: mousePos.y))
-                path.line(to: NSPoint(x: mousePos.x - gap, y: mousePos.y))
-                // Right arm
-                path.move(to: NSPoint(x: mousePos.x + gap, y: mousePos.y))
-                path.line(to: NSPoint(x: mousePos.x + size, y: mousePos.y))
-                // Top arm
-                path.move(to: NSPoint(x: mousePos.x, y: mousePos.y + size))
-                path.line(to: NSPoint(x: mousePos.x, y: mousePos.y + gap))
-                // Bottom arm
-                path.move(to: NSPoint(x: mousePos.x, y: mousePos.y - gap))
-                path.line(to: NSPoint(x: mousePos.x, y: mousePos.y - size))
-                
-                path.lineWidth = width
-                path.stroke()
-            }
-            
-            // Draw coordinate display near cursor
-            let coordText = "\(Int(mousePos.x)), \(Int(mousePos.y))"
-            let attrs: [NSAttributedString.Key: Any] = [
-                .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular),
-                .foregroundColor: NSColor.white
-            ]
-            let textSize = coordText.size(withAttributes: attrs)
-            let textPoint = NSPoint(x: mousePos.x + 12, y: mousePos.y - textSize.height - 8)
-            
-            // Background for coordinates
-            let bgRect = NSRect(x: textPoint.x - 3, y: textPoint.y - 2, width: textSize.width + 6, height: textSize.height + 4)
-            NSColor.black.withAlphaComponent(0.7).setFill()
-            NSBezierPath(roundedRect: bgRect, xRadius: 3, yRadius: 3).fill()
-            coordText.draw(at: textPoint, withAttributes: attrs)
+        // Hide coord layers during selection/drawing (will show via mouseMoved when idle)
+        if isSelecting || isDrawingAnnotation {
+            coordLayer?.isHidden = true
+            coordBgLayer?.isHidden = true
         }
 
-        // Draw selection rectangle being drawn
         if isSelecting, let start = selectionStart, let end = selectionEnd {
             let rect = rectFromPoints(start, end)
 
-            // Clear the selection area
             NSColor.clear.setFill()
             rect.fill(using: .copy)
 
-            // Draw selection border
             NSColor.white.setStroke()
             let borderPath = NSBezierPath(rect: rect)
             borderPath.lineWidth = 2
             borderPath.stroke()
 
-            // Draw dashed inner border
             NSColor.black.setStroke()
             let dashedPath = NSBezierPath(rect: rect.insetBy(dx: 1, dy: 1))
             dashedPath.lineWidth = 1
             dashedPath.setLineDash([4, 4], count: 2, phase: 0)
             dashedPath.stroke()
 
-            // Draw size label
             drawSizeLabel(for: rect)
         }
 
-        // Draw existing annotations
         if let context = NSGraphicsContext.current?.cgContext {
             for annotation in annotations {
                 annotation.draw(in: context)
             }
 
-            // Draw annotation being drawn
             if isDrawingAnnotation, let start = annotationStart, let end = annotationEnd {
                 context.setStrokeColor(annotationColor)
                 context.setLineWidth(strokeWidth)
 
                 if currentDrawingTool == .arrow {
-                    // Draw arrow preview
                     context.setFillColor(annotationColor)
                     context.setLineCap(.round)
                     context.move(to: start)
                     context.addLine(to: end)
                     context.strokePath()
 
-                    // Draw arrow head
                     let angle = atan2(end.y - start.y, end.x - start.x)
                     let arrowHeadLength: CGFloat = 20.0
                     let arrowHeadAngle: CGFloat = .pi / 6
@@ -317,14 +455,12 @@ class SelectionView: NSView {
                     context.closePath()
                     context.fillPath()
                 } else {
-                    // Draw rectangle preview
                     let rect = rectFromPoints(start, end)
                     context.stroke(rect)
                 }
             }
         }
 
-        // Draw instructions
         drawInstructions()
     }
 
@@ -332,8 +468,7 @@ class SelectionView: NSView {
         let sizeText = "\(Int(rect.width)) × \(Int(rect.height))"
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .medium),
-            .foregroundColor: NSColor.white,
-            .backgroundColor: NSColor.black.withAlphaComponent(0.7)
+            .foregroundColor: NSColor.white
         ]
 
         let textSize = sizeText.size(withAttributes: attributes)
@@ -354,7 +489,6 @@ class SelectionView: NSView {
     }
 
     private func drawInstructions() {
-        // Draw mode indicator
         let modeText: String
         let modeColor: NSColor
         switch currentTool {
@@ -375,7 +509,7 @@ class SelectionView: NSView {
         let modeSize = modeText.size(withAttributes: modeAttrs)
         let modePoint = NSPoint(
             x: bounds.midX - modeSize.width / 2,
-            y: bounds.height - 90
+            y: bounds.height - 120
         )
         let modeBgRect = NSRect(
             x: modePoint.x - 12,
@@ -387,7 +521,6 @@ class SelectionView: NSView {
         NSBezierPath(roundedRect: modeBgRect, xRadius: 8, yRadius: 8).fill()
         modeText.draw(at: modePoint, withAttributes: modeAttrs)
 
-        // Draw instructions
         var text: String
         switch currentTool {
         case .rectangle:
@@ -405,10 +538,9 @@ class SelectionView: NSView {
         let textSize = text.size(withAttributes: attributes)
         let point = NSPoint(
             x: bounds.midX - textSize.width / 2,
-            y: bounds.height - 50
+            y: bounds.height - 80
         )
 
-        // Background
         let bgRect = NSRect(
             x: point.x - 10,
             y: point.y - 5,
@@ -427,135 +559,5 @@ class SelectionView: NSView {
         let width = abs(p2.x - p1.x)
         let height = abs(p2.y - p1.y)
         return NSRect(x: x, y: y, width: width, height: height)
-    }
-
-    // MARK: - Mouse Events
-
-    override func mouseDown(with event: NSEvent) {
-        let point = convert(event.locationInWindow, from: nil)
-
-        if currentTool == .rectangle || currentTool == .arrow {
-            isDrawingAnnotation = true
-            currentDrawingTool = currentTool
-            annotationStart = point
-            annotationEnd = point
-            needsDisplay = true
-        } else {
-            selectionStart = point
-            selectionEnd = point
-            isSelecting = true
-            needsDisplay = true
-        }
-    }
-
-    override func mouseDragged(with event: NSEvent) {
-        let point = convert(event.locationInWindow, from: nil)
-
-        if isDrawingAnnotation {
-            annotationEnd = point
-            needsDisplay = true
-        } else if isSelecting {
-            selectionEnd = point
-            needsDisplay = true
-        }
-    }
-
-    override func mouseUp(with event: NSEvent) {
-        // Update mouse position to current location
-        currentMousePosition = convert(event.locationInWindow, from: nil)
-
-        if isDrawingAnnotation, let start = annotationStart, let end = annotationEnd {
-            isDrawingAnnotation = false
-
-            // Create annotation based on what tool we started with
-            if currentDrawingTool == .arrow {
-                let distance = hypot(end.x - start.x, end.y - start.y)
-                if distance > 10 {
-                    let annotation = ArrowAnnotation(
-                        startPoint: start, endPoint: end,
-                        color: annotationColor, strokeWidth: strokeWidth
-                    )
-                    annotations.append(annotation)
-                }
-            } else {
-                let rect = rectFromPoints(start, end)
-                if rect.width > 5 && rect.height > 5 {
-                    let annotation = RectangleAnnotation(
-                        bounds: rect, color: annotationColor, strokeWidth: strokeWidth
-                    )
-                    annotations.append(annotation)
-                }
-            }
-
-            // Go back to select mode after drawing
-            currentTool = .select
-
-            annotationStart = nil
-            annotationEnd = nil
-            needsDisplay = true
-        } else if isSelecting, let start = selectionStart, let end = selectionEnd {
-            isSelecting = false
-            let rect = rectFromPoints(start, end)
-
-            // Minimum selection size - immediately complete
-            if rect.width > 10 && rect.height > 10 {
-                onSelectionComplete?(rect, annotations)
-            }
-
-            selectionStart = nil
-            selectionEnd = nil
-            needsDisplay = true
-        }
-    }
-
-    override func mouseMoved(with event: NSEvent) {
-        currentMousePosition = convert(event.locationInWindow, from: nil)
-        needsDisplay = true
-    }
-
-    // MARK: - Keyboard Events
-
-    override func keyDown(with event: NSEvent) {
-        // Consume all key events - don't pass through
-        switch event.keyCode {
-        case 53: // ESC
-            onCancel?()
-        case 15: // R - Rectangle tool
-            currentTool = .rectangle
-            needsDisplay = true
-        case 51: // Delete - remove last annotation
-            if !annotations.isEmpty {
-                annotations.removeLast()
-                needsDisplay = true
-            }
-        default:
-            // Don't call super - consume all key events
-            break
-        }
-    }
-
-    override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        // Handle key events here since performKeyEquivalent is called before keyDown
-        switch event.keyCode {
-        case 53: // ESC
-            onCancel?()
-            return true
-        case 15: // R - Rectangle tool
-            currentTool = .rectangle
-            needsDisplay = true
-            return true
-        case 51: // Delete - remove last annotation
-            if !annotations.isEmpty {
-                annotations.removeLast()
-                needsDisplay = true
-            }
-            return true
-        default:
-            return true // Still consume all other keys
-        }
-    }
-
-    override func becomeFirstResponder() -> Bool {
-        return true
     }
 }

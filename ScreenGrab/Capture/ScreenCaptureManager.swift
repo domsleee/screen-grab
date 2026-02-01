@@ -15,10 +15,7 @@ class ScreenCaptureManager {
         // Remember the currently active app to restore later
         previousApp = NSWorkspace.shared.frontmostApplication
 
-        // Temporarily become a regular app to receive keyboard/mouse focus
-        NSApp.setActivationPolicy(.regular)
-
-        // Create overlay windows for all screens
+        // Create overlay windows for all screens (non-activating panels)
         for screen in NSScreen.screens {
             let overlayWindow = SelectionOverlayWindow(screen: screen)
             overlayWindow.onSelectionComplete = { [weak self] rect, screenFrame, annotations in
@@ -28,11 +25,10 @@ class ScreenCaptureManager {
                 self?.closeOverlays()
             }
             overlayWindows.append(overlayWindow)
-            overlayWindow.makeKeyAndOrderFront(nil)
+            overlayWindow.show()
         }
-
-        // Activate app AFTER windows are shown
-        NSApp.activate(ignoringOtherApps: true)
+        
+        // Don't activate - panels are non-activating
     }
 
     private func handleSelectionComplete(rect: CGRect, screenFrame: CGRect, annotations: [any Annotation]) {
@@ -88,18 +84,10 @@ class ScreenCaptureManager {
         for window in overlayWindows {
             window.onSelectionComplete = nil
             window.onCancel = nil
-            window.stopKeyMonitors()
+            window.stopEventMonitors()
         }
         overlayWindows.removeAll()
-
-        // Go back to accessory app (menu bar only)
-        NSApp.setActivationPolicy(.accessory)
-
-        // Restore focus to the previously active app
-        if let app = previousApp {
-            app.activate(options: [])
-            previousApp = nil
-        }
+        previousApp = nil
     }
 
     private func renderAnnotations(

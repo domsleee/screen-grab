@@ -26,7 +26,8 @@ DerivedData/
 ._*
 
 # Build artifacts
-*.app/
+ScreenGrab.app/Contents/MacOS/
+ScreenGrab.app/Contents/_CodeSignature/
 
 # IDE
 .idea/

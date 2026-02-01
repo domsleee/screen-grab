@@ -176,59 +176,62 @@ class SelectionView: NSView {
         ]
         let textSize = (coordText as NSString).size(withAttributes: attrs)
         
-        // Image size includes crosshair + text below-right
-        let textPadding: CGFloat = 6
-        let textOffsetX: CGFloat = 18
-        let textOffsetY: CGFloat = 4
-        let totalWidth = max(crosshairSize, textOffsetX + textSize.width + textPadding * 2)
-        let totalHeight = crosshairSize + textSize.height + textPadding
+        // Text positioned to bottom-right of crosshair
+        let textPadding: CGFloat = 4
+        let textOffsetX: CGFloat = center + 8
+        let textBoxHeight = textSize.height + textPadding
+        let totalWidth = textOffsetX + textSize.width + textPadding * 2
+        let bottomPadding: CGFloat = textBoxHeight + 4  // Space for text below crosshair
+        let totalHeight = crosshairSize + bottomPadding
         
         let image = NSImage(size: NSSize(width: totalWidth, height: totalHeight))
         image.lockFocus()
         
-        // Draw crosshair at top-center area
-        let crosshairY = totalHeight - crosshairSize
+        // Crosshair at top of image (NSImage y=0 is bottom)
+        let crosshairCenterY = totalHeight - center
         
         // Black outline
         NSColor.black.setStroke()
         let outline = NSBezierPath()
         outline.lineWidth = 5
-        outline.move(to: NSPoint(x: center - armLength, y: crosshairY + center))
-        outline.line(to: NSPoint(x: center - gap, y: crosshairY + center))
-        outline.move(to: NSPoint(x: center + gap, y: crosshairY + center))
-        outline.line(to: NSPoint(x: center + armLength, y: crosshairY + center))
-        outline.move(to: NSPoint(x: center, y: crosshairY + center - armLength))
-        outline.line(to: NSPoint(x: center, y: crosshairY + center - gap))
-        outline.move(to: NSPoint(x: center, y: crosshairY + center + gap))
-        outline.line(to: NSPoint(x: center, y: crosshairY + center + armLength))
+        outline.move(to: NSPoint(x: center - armLength, y: crosshairCenterY))
+        outline.line(to: NSPoint(x: center - gap, y: crosshairCenterY))
+        outline.move(to: NSPoint(x: center + gap, y: crosshairCenterY))
+        outline.line(to: NSPoint(x: center + armLength, y: crosshairCenterY))
+        outline.move(to: NSPoint(x: center, y: crosshairCenterY - armLength))
+        outline.line(to: NSPoint(x: center, y: crosshairCenterY - gap))
+        outline.move(to: NSPoint(x: center, y: crosshairCenterY + gap))
+        outline.line(to: NSPoint(x: center, y: crosshairCenterY + armLength))
         outline.stroke()
         
         // White inner line
         NSColor.white.setStroke()
         let inner = NSBezierPath()
         inner.lineWidth = 2
-        inner.move(to: NSPoint(x: center - armLength, y: crosshairY + center))
-        inner.line(to: NSPoint(x: center - gap, y: crosshairY + center))
-        inner.move(to: NSPoint(x: center + gap, y: crosshairY + center))
-        inner.line(to: NSPoint(x: center + armLength, y: crosshairY + center))
-        inner.move(to: NSPoint(x: center, y: crosshairY + center - armLength))
-        inner.line(to: NSPoint(x: center, y: crosshairY + center - gap))
-        inner.move(to: NSPoint(x: center, y: crosshairY + center + gap))
-        inner.line(to: NSPoint(x: center, y: crosshairY + center + armLength))
+        inner.move(to: NSPoint(x: center - armLength, y: crosshairCenterY))
+        inner.line(to: NSPoint(x: center - gap, y: crosshairCenterY))
+        inner.move(to: NSPoint(x: center + gap, y: crosshairCenterY))
+        inner.line(to: NSPoint(x: center + armLength, y: crosshairCenterY))
+        inner.move(to: NSPoint(x: center, y: crosshairCenterY - armLength))
+        inner.line(to: NSPoint(x: center, y: crosshairCenterY - gap))
+        inner.move(to: NSPoint(x: center, y: crosshairCenterY + gap))
+        inner.line(to: NSPoint(x: center, y: crosshairCenterY + armLength))
         inner.stroke()
         
-        // Draw coord background
-        let bgRect = NSRect(x: textOffsetX - textPadding, y: 0,
-                           width: textSize.width + textPadding * 2, height: textSize.height + textPadding)
-        NSColor.black.withAlphaComponent(0.7).setFill()
+        // Draw coord background at bottom-right
+        let textY: CGFloat = 2  // Near bottom of image
+        let bgRect = NSRect(x: textOffsetX - textPadding, y: textY,
+                           width: textSize.width + textPadding * 2, height: textBoxHeight)
+        NSColor.black.withAlphaComponent(0.75).setFill()
         NSBezierPath(roundedRect: bgRect, xRadius: 3, yRadius: 3).fill()
         
         // Draw coord text
-        (coordText as NSString).draw(at: NSPoint(x: textOffsetX, y: textPadding / 2), withAttributes: attrs)
+        (coordText as NSString).draw(at: NSPoint(x: textOffsetX, y: textY + textPadding/2), withAttributes: attrs)
         
         image.unlockFocus()
         
-        crosshairCursor = NSCursor(image: image, hotSpot: NSPoint(x: center, y: crosshairY + center))
+        // Hotspot at crosshair center
+        crosshairCursor = NSCursor(image: image, hotSpot: NSPoint(x: center, y: center))
         crosshairCursor?.set()
     }
     
@@ -312,7 +315,7 @@ class SelectionView: NSView {
             NSEvent.removeMonitor(monitor)
             localKeyMonitor = nil
         }
-        NSCursor.pop()
+        NSCursor.arrow.set()
     }
 
     private func handleKeyEvent(_ event: NSEvent) {

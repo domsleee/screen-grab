@@ -51,14 +51,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Temporarily become regular app so permission dialog stays open
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
-        
+
         // Use ScreenCaptureKit to trigger permission request
         Task {
             do {
                 // This will trigger the permission dialog and WAIT for user response
                 let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
                 logInfo("Screen recording permission granted, found \(content.displays.count) displays")
-                
+
                 // Permission granted - go back to accessory mode
                 await MainActor.run {
                     NSApp.setActivationPolicy(.accessory)
@@ -69,14 +69,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 await MainActor.run {
                     let alert = NSAlert()
                     alert.messageText = "Screen Recording Permission Required"
-                    alert.informativeText = "Please grant Screen Recording permission in System Settings → Privacy & Security → Screen Recording, then restart ScreenGrab."
+                    alert.informativeText = "Please grant Screen Recording permission in System Settings " +
+                        "→ Privacy & Security → Screen Recording, then restart ScreenGrab."
                     alert.alertStyle = .warning
                     alert.addButton(withTitle: "Open System Settings")
                     alert.addButton(withTitle: "Quit")
-                    
+
                     let response = alert.runModal()
                     if response == .alertFirstButtonReturn {
-                        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
+                        let urlString = "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+                        if let url = URL(string: urlString) {
+                            NSWorkspace.shared.open(url)
+                        }
                     }
                     NSApp.terminate(nil)
                 }

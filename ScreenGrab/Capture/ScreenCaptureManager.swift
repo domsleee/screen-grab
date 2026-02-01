@@ -27,7 +27,7 @@ class ScreenCaptureManager {
             overlayWindows.append(overlayWindow)
             overlayWindow.show()
         }
-        
+
         // Don't activate - panels are non-activating
     }
 
@@ -54,7 +54,7 @@ class ScreenCaptureManager {
                 width: rect.width,
                 height: rect.height
             )
-            
+
             logDebug("Capturing rect: \(captureRect)")
 
             // Capture the screen region
@@ -148,17 +148,17 @@ class ScreenCaptureManager {
                 return image
             }
         }
-        
+
         // Fallback to old API - rect is already in screen coordinates (top-left origin)
         return CGWindowListCreateImage(rect, .optionOnScreenBelowWindow, kCGNullWindowID, [.bestResolution])
     }
-    
+
     @available(macOS 14.0, *)
     private func captureWithScreenCaptureKit(rect: CGRect) -> CGImage? {
         let box = UnsafeMutablePointer<CGImage?>.allocate(capacity: 1)
         box.initialize(to: nil)
         let semaphore = DispatchSemaphore(value: 0)
-        
+
         Task {
             do {
                 let content = try await SCShareableContent.current
@@ -167,15 +167,15 @@ class ScreenCaptureManager {
                     semaphore.signal()
                     return
                 }
-                
+
                 let filter = SCContentFilter(display: display, excludingWindows: [])
                 let config = SCStreamConfiguration()
                 config.width = Int(display.width) * 2
                 config.height = Int(display.height) * 2
                 config.showsCursor = false
-                
+
                 let fullImage = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
-                
+
                 // rect is already in screen coordinates (top-left origin)
                 let scale = CGFloat(fullImage.width) / CGFloat(display.width)
                 let cropRect = CGRect(
@@ -184,14 +184,14 @@ class ScreenCaptureManager {
                     width: rect.width * scale,
                     height: rect.height * scale
                 )
-                
+
                 box.pointee = fullImage.cropping(to: cropRect)
             } catch {
                 logError("ScreenCaptureKit error: \(error)")
             }
             semaphore.signal()
         }
-        
+
         _ = semaphore.wait(timeout: .now() + 5)
         let result = box.pointee
         box.deallocate()

@@ -48,11 +48,11 @@ class SelectionOverlayWindow: NSPanel {
         let previousPolicy = NSApp.activationPolicy()
         NSApp.setActivationPolicy(.accessory)
         NSApp.activate(ignoringOtherApps: true)
-        
+
         orderFrontRegardless()
         makeKey()
         selectionView?.setupMonitors()
-        
+
         // Set cursor after brief delay
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
             self?.selectionView?.setCrosshairCursor()
@@ -114,7 +114,7 @@ class SelectionView: NSView {
         super.init(coder: coder)
         setupView()
     }
-    
+
     private func setupView() {
         wantsLayer = true
         layer?.drawsAsynchronously = true
@@ -125,7 +125,7 @@ class SelectionView: NSView {
         setupTrackingArea()
         setupCoordLayer()
     }
-    
+
     private func setupDisplayLink() {
         // Poll mouse position at 120Hz for smooth coordinate updates
         coordTimer = Timer(timeInterval: 1.0/120.0, repeats: true) { [weak self] _ in
@@ -135,14 +135,16 @@ class SelectionView: NSView {
             let viewPos = self.convert(windowPos, from: nil)
             self.updateCoordDisplay(at: viewPos)
         }
-        RunLoop.main.add(coordTimer!, forMode: .common)
+        if let timer = coordTimer {
+            RunLoop.main.add(timer, forMode: .common)
+        }
     }
-    
+
     private func stopDisplayLink() {
         coordTimer?.invalidate()
         coordTimer = nil
     }
-    
+
     private func setupCoordLayer() {
         // Coords are now baked into cursor image - no separate layer needed
         // Keep empty layers to avoid nil checks elsewhere
@@ -150,23 +152,23 @@ class SelectionView: NSView {
         bg.isHidden = true
         layer?.addSublayer(bg)
         coordBgLayer = bg
-        
+
         let text = CATextLayer()
         text.isHidden = true
         layer?.addSublayer(text)
         coordLayer = text
     }
-    
+
     private func createCrosshairCursor() {
         updateCursorWithCoords(NSPoint(x: 0, y: 0))
     }
-    
+
     private func updateCursorWithCoords(_ point: NSPoint) {
         let crosshairSize: CGFloat = 33
         let center = crosshairSize / 2
         let armLength: CGFloat = 14
         let gap: CGFloat = 3
-        
+
         // Coord text
         let coordText = "\(Int(point.x)), \(Int(point.y))"
         let font = NSFont.monospacedSystemFont(ofSize: 11, weight: .medium)
@@ -175,7 +177,7 @@ class SelectionView: NSView {
             .foregroundColor: NSColor.white
         ]
         let textSize = (coordText as NSString).size(withAttributes: attrs)
-        
+
         // Text positioned to bottom-right of crosshair
         let textPadding: CGFloat = 4
         let textOffsetX: CGFloat = center + 8
@@ -183,13 +185,13 @@ class SelectionView: NSView {
         let totalWidth = textOffsetX + textSize.width + textPadding * 2
         let bottomPadding: CGFloat = textBoxHeight + 4  // Space for text below crosshair
         let totalHeight = crosshairSize + bottomPadding
-        
+
         let image = NSImage(size: NSSize(width: totalWidth, height: totalHeight))
         image.lockFocus()
-        
+
         // Crosshair at top of image (NSImage y=0 is bottom)
         let crosshairCenterY = totalHeight - center
-        
+
         // Black outline
         NSColor.black.setStroke()
         let outline = NSBezierPath()
@@ -203,7 +205,7 @@ class SelectionView: NSView {
         outline.move(to: NSPoint(x: center, y: crosshairCenterY + gap))
         outline.line(to: NSPoint(x: center, y: crosshairCenterY + armLength))
         outline.stroke()
-        
+
         // White inner line
         NSColor.white.setStroke()
         let inner = NSBezierPath()
@@ -217,29 +219,29 @@ class SelectionView: NSView {
         inner.move(to: NSPoint(x: center, y: crosshairCenterY + gap))
         inner.line(to: NSPoint(x: center, y: crosshairCenterY + armLength))
         inner.stroke()
-        
+
         // Draw coord background at bottom-right
         let textY: CGFloat = 2  // Near bottom of image
         let bgRect = NSRect(x: textOffsetX - textPadding, y: textY,
                            width: textSize.width + textPadding * 2, height: textBoxHeight)
         NSColor.black.withAlphaComponent(0.75).setFill()
         NSBezierPath(roundedRect: bgRect, xRadius: 3, yRadius: 3).fill()
-        
+
         // Draw coord text
         (coordText as NSString).draw(at: NSPoint(x: textOffsetX, y: textY + textPadding/2), withAttributes: attrs)
-        
+
         image.unlockFocus()
-        
+
         // Hotspot at crosshair center
         crosshairCursor = NSCursor(image: image, hotSpot: NSPoint(x: center, y: center))
         crosshairCursor?.set()
     }
-    
+
     private func updateCoordDisplay(at point: NSPoint) {
         // Coords are now baked into cursor - just update cursor image
         updateCursorWithCoords(point)
     }
-    
+
     private func hideCoordDisplay() {
         // No longer needed - coords are in cursor
     }
@@ -247,7 +249,7 @@ class SelectionView: NSView {
     deinit {
         stopMonitors()
     }
-    
+
     private func setupTrackingArea() {
         let trackingArea = NSTrackingArea(
             rect: bounds,
@@ -257,7 +259,7 @@ class SelectionView: NSView {
         )
         addTrackingArea(trackingArea)
     }
-    
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if let window = window {
@@ -270,21 +272,21 @@ class SelectionView: NSView {
             window.invalidateCursorRects(for: self)
         }
     }
-    
+
     override func resetCursorRects() {
         if let cursor = crosshairCursor {
             addCursorRect(bounds, cursor: cursor)
         }
     }
-    
+
     override func cursorUpdate(with event: NSEvent) {
         crosshairCursor?.set()
     }
-    
+
     override func mouseEntered(with event: NSEvent) {
         crosshairCursor?.set()
     }
-    
+
     override func mouseExited(with event: NSEvent) {
         // Don't reset cursor - we want crosshair everywhere on our overlay
     }
@@ -300,7 +302,7 @@ class SelectionView: NSView {
         window?.invalidateCursorRects(for: self)
         setupDisplayLink()
     }
-    
+
     func setCrosshairCursor() {
         crosshairCursor?.set()
     }
@@ -344,7 +346,7 @@ class SelectionView: NSView {
     }
 
     // MARK: - Mouse Events
-    
+
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         hideCoordDisplay()
@@ -412,7 +414,7 @@ class SelectionView: NSView {
             selectionStart = nil
             selectionEnd = nil
         }
-        
+
         if let pos = currentMousePosition {
             updateCoordDisplay(at: pos)
         }

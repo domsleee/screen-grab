@@ -138,6 +138,69 @@ class SelectionView: NSView {
     private var crosshairCursor: NSCursor?
     private var coordTimer: Timer?
 
+    // Custom diagonal resize cursors (macOS has no native ones)
+    private lazy var nwseResizeCursor: NSCursor = {
+        let size: CGFloat = 16
+        let image = NSImage(size: NSSize(width: size, height: size))
+        image.lockFocus()
+        NSColor.white.setStroke()
+        NSColor.black.withAlphaComponent(0.8).setFill()
+        let path = NSBezierPath()
+        path.lineWidth = 1.5
+        // NW-SE diagonal line
+        path.move(to: NSPoint(x: 3, y: size - 3))
+        path.line(to: NSPoint(x: size - 3, y: 3))
+        // NW arrowhead
+        path.move(to: NSPoint(x: 3, y: size - 3))
+        path.line(to: NSPoint(x: 3, y: size - 7))
+        path.move(to: NSPoint(x: 3, y: size - 3))
+        path.line(to: NSPoint(x: 7, y: size - 3))
+        // SE arrowhead
+        path.move(to: NSPoint(x: size - 3, y: 3))
+        path.line(to: NSPoint(x: size - 3, y: 7))
+        path.move(to: NSPoint(x: size - 3, y: 3))
+        path.line(to: NSPoint(x: size - 7, y: 3))
+        // Draw black outline first, then white
+        NSColor.black.setStroke()
+        let outline = path.copy() as! NSBezierPath
+        outline.lineWidth = 3.0
+        outline.stroke()
+        NSColor.white.setStroke()
+        path.stroke()
+        image.unlockFocus()
+        return NSCursor(image: image, hotSpot: NSPoint(x: size / 2, y: size / 2))
+    }()
+
+    private lazy var neswResizeCursor: NSCursor = {
+        let size: CGFloat = 16
+        let image = NSImage(size: NSSize(width: size, height: size))
+        image.lockFocus()
+        let path = NSBezierPath()
+        path.lineWidth = 1.5
+        // NE-SW diagonal line
+        path.move(to: NSPoint(x: size - 3, y: size - 3))
+        path.line(to: NSPoint(x: 3, y: 3))
+        // NE arrowhead
+        path.move(to: NSPoint(x: size - 3, y: size - 3))
+        path.line(to: NSPoint(x: size - 7, y: size - 3))
+        path.move(to: NSPoint(x: size - 3, y: size - 3))
+        path.line(to: NSPoint(x: size - 3, y: size - 7))
+        // SW arrowhead
+        path.move(to: NSPoint(x: 3, y: 3))
+        path.line(to: NSPoint(x: 7, y: 3))
+        path.move(to: NSPoint(x: 3, y: 3))
+        path.line(to: NSPoint(x: 3, y: 7))
+        // Draw black outline first, then white
+        NSColor.black.setStroke()
+        let outline = path.copy() as! NSBezierPath
+        outline.lineWidth = 3.0
+        outline.stroke()
+        NSColor.white.setStroke()
+        path.stroke()
+        image.unlockFocus()
+        return NSCursor(image: image, hotSpot: NSPoint(x: size / 2, y: size / 2))
+    }()
+
     override var acceptsFirstResponder: Bool { true }
     override var isOpaque: Bool { false }
 
@@ -317,7 +380,56 @@ class SelectionView: NSView {
     }
 
     private func updateHoverState(at point: NSPoint) {
-        // Only check hover in drawing modes, not while actively drawing/dragging
+        guard !isDraggingAnnotation && !isDrawingAnnotation else { return }
+
+        // Select mode: show handle-aware cursors and hover highlights
+        if currentMode == .select {
+            // Check selected annotation handles first
+            if let selected = selectedAnnotation, let handle = selected.hitTest(point: point) {
+                // Hovering the selected annotation — no dashed highlight needed (handles are visible)
+                if hoveredAnnotation != nil {
+                    hoveredAnnotation = nil
+                    updateHoverHighlightLayer()
+                }
+                cursorForHandle(handle).set()
+                return
+            }
+
+            // Check if hovering over any annotation
+            var foundAnnotation: (any Annotation)?
+            for annotation in annotations.reversed() {
+                let rect = visualBounds(for: annotation).insetBy(dx: -4, dy: -4)
+                if rect.contains(point) {
+                    foundAnnotation = annotation
+                    break
+                }
+            }
+
+            if let found = foundAnnotation {
+                // Show dashed highlight for hovered annotation (if not the selected one)
+                if found.id != selectedAnnotation?.id {
+                    if hoveredAnnotation?.id != found.id {
+                        hoveredAnnotation = found
+                        updateHoverHighlightLayer()
+                    }
+                } else if hoveredAnnotation != nil {
+                    hoveredAnnotation = nil
+                    updateHoverHighlightLayer()
+                }
+                NSCursor.openHand.set()
+                return
+            }
+
+            // Hovering nothing
+            if hoveredAnnotation != nil {
+                hoveredAnnotation = nil
+                updateHoverHighlightLayer()
+            }
+            NSCursor.arrow.set()
+            return
+        }
+
+        // Drawing modes: hover-to-select with highlight
         guard currentMode == .rectangle || currentMode == .arrow || currentMode == .text else {
             if hoveredAnnotation != nil {
                 hoveredAnnotation = nil
@@ -325,7 +437,6 @@ class SelectionView: NSView {
             }
             return
         }
-        guard !isDraggingAnnotation && !isDrawingAnnotation else { return }
 
         // Use bounding rect for hover detection — much broader than hitTest line proximity
         var foundAnnotation: (any Annotation)?
@@ -352,6 +463,11 @@ class SelectionView: NSView {
     }
 
     private func updateCoordDisplay(at point: NSPoint) {
+        // Show iBeam when editing text
+        if editingTextAnnotation != nil {
+            NSCursor.iBeam.set()
+            return
+        }
         // Only show coords cursor in non-select modes, and not when hovering over an annotation
         if currentMode != .select && hoveredAnnotation == nil {
             updateCursorWithCoords(point)
@@ -359,7 +475,9 @@ class SelectionView: NSView {
     }
 
     private func updateCursorForMode() {
-        if currentMode == .select {
+        if editingTextAnnotation != nil {
+            NSCursor.iBeam.set()
+        } else if currentMode == .select {
             NSCursor.arrow.set()
         } else if let pos = currentMousePosition {
             updateCursorWithCoords(pos)
@@ -367,6 +485,23 @@ class SelectionView: NSView {
             crosshairCursor?.set()
         }
         window?.invalidateCursorRects(for: self)
+    }
+
+    private func cursorForHandle(_ handle: AnnotationHandle, isDragging: Bool = false) -> NSCursor {
+        switch handle {
+        case .body:
+            return isDragging ? .closedHand : .openHand
+        case .topLeft, .bottomRight:
+            return nwseResizeCursor
+        case .topRight, .bottomLeft:
+            return neswResizeCursor
+        case .top, .bottom:
+            return .resizeUpDown
+        case .left, .right:
+            return .resizeLeftRight
+        case .startPoint, .endPoint:
+            return .crosshair
+        }
     }
 
     private func hideCoordDisplay() {
@@ -402,23 +537,37 @@ class SelectionView: NSView {
 
     override func resetCursorRects() {
         if currentMode == .select {
-            addCursorRect(bounds, cursor: .arrow)
+            // Don't set a fixed cursor rect — hover state manages cursors dynamically
         } else if let cursor = crosshairCursor {
             addCursorRect(bounds, cursor: cursor)
         }
     }
 
     override func cursorUpdate(with event: NSEvent) {
-        if currentMode == .select {
-            NSCursor.arrow.set()
+        if editingTextAnnotation != nil {
+            NSCursor.iBeam.set()
+        } else if currentMode == .select {
+            // Let hover state manage cursor — just do a quick update
+            if let pos = currentMousePosition {
+                updateHoverState(at: pos)
+            } else {
+                NSCursor.arrow.set()
+            }
         } else {
             crosshairCursor?.set()
         }
     }
 
     override func mouseEntered(with event: NSEvent) {
-        if currentMode == .select {
-            NSCursor.arrow.set()
+        if editingTextAnnotation != nil {
+            NSCursor.iBeam.set()
+        } else if currentMode == .select {
+            // Let hover state manage cursor
+            if let pos = currentMousePosition {
+                updateHoverState(at: pos)
+            } else {
+                NSCursor.arrow.set()
+            }
         } else {
             crosshairCursor?.set()
         }
@@ -662,6 +811,8 @@ class SelectionView: NSView {
                         dragStartArrowEnd = arrow.endPoint
                     }
 
+                    cursorForHandle(handle, isDragging: true).set()
+
                     CATransaction.begin()
                     CATransaction.setDisableActions(true)
                     updateSelectionHandlesLayer()
@@ -685,7 +836,8 @@ class SelectionView: NSView {
                 if rect.contains(point) {
                     selectedAnnotation = annotation
                     // Use precise hitTest for endpoint/corner handles, fall back to .body
-                    activeHandle = annotation.hitTest(point: point) ?? .body
+                    let handle = annotation.hitTest(point: point) ?? .body
+                    activeHandle = handle
                     isDraggingAnnotation = true
                     dragStartPoint = point
                     dragStartBounds = annotation.bounds
@@ -694,6 +846,8 @@ class SelectionView: NSView {
                         dragStartArrowStart = arrow.startPoint
                         dragStartArrowEnd = arrow.endPoint
                     }
+
+                    cursorForHandle(handle, isDragging: true).set()
 
                     CATransaction.begin()
                     CATransaction.setDisableActions(true)
@@ -725,7 +879,8 @@ class SelectionView: NSView {
                         return
                     }
                     selectedAnnotation = annotation
-                    activeHandle = annotation.hitTest(point: point) ?? .body
+                    let handle = annotation.hitTest(point: point) ?? .body
+                    activeHandle = handle
                     isDraggingAnnotation = true
                     dragStartPoint = point
                     dragStartBounds = annotation.bounds
@@ -734,6 +889,8 @@ class SelectionView: NSView {
                         dragStartArrowStart = arrow.startPoint
                         dragStartArrowEnd = arrow.endPoint
                     }
+
+                    cursorForHandle(handle, isDragging: true).set()
 
                     CATransaction.begin()
                     CATransaction.setDisableActions(true)
@@ -760,6 +917,11 @@ class SelectionView: NSView {
 
         if isDraggingAnnotation, let selected = selectedAnnotation, let start = dragStartPoint {
             let delta = CGPoint(x: point.x - start.x, y: point.y - start.y)
+
+            // Keep the drag cursor locked
+            if let handle = activeHandle {
+                cursorForHandle(handle, isDragging: true).set()
+            }
 
             // Disable implicit animations for immediate response
             CATransaction.begin()
@@ -851,6 +1013,19 @@ class SelectionView: NSView {
             dragStartBounds = nil
             dragStartArrowStart = nil
             dragStartArrowEnd = nil
+
+            // Restore cursor for current mode
+            if currentMode == .select {
+                // Check what's under the mouse now for hover cursor
+                if let pos = currentMousePosition, let selected = selectedAnnotation,
+                   let handle = selected.hitTest(point: pos) {
+                    cursorForHandle(handle).set()
+                } else {
+                    NSCursor.arrow.set()
+                }
+            } else {
+                updateCursorForMode()
+            }
             needsDisplay = true
         } else if isDrawingAnnotation, let start = annotationStart, let end = annotationEnd {
             isDrawingAnnotation = false
@@ -902,9 +1077,8 @@ class SelectionView: NSView {
     override func mouseMoved(with event: NSEvent) {
         currentMousePosition = convert(event.locationInWindow, from: nil)
         // Hover detection and coord display handled by 120Hz timer
-        if currentMode == .select {
-            NSCursor.arrow.set()
-        } else if hoveredAnnotation == nil {
+        // In select mode, cursor is managed by updateHoverState
+        if currentMode != .select && hoveredAnnotation == nil {
             crosshairCursor?.set()
         }
     }

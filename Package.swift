@@ -18,6 +18,11 @@ let package = Package(
             dependencies: ["HotKey"],
             path: "ScreenGrab",
             exclude: ["Resources/Info.plist", "Resources/ScreenGrab.entitlements"]
+        ),
+        .testTarget(
+            name: "ScreenGrabTests",
+            dependencies: ["ScreenGrab"],
+            path: "Tests/ScreenGrabTests"
         )
     ]
 )

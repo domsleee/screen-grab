@@ -43,6 +43,25 @@ class ArrowAnnotation: Annotation {
         self.strokeWidth = strokeWidth
     }
 
+    /// Computed arrowhead geometry: the two wing points and the base center.
+    struct ArrowGeometry {
+        let point1: CGPoint
+        let point2: CGPoint
+        let basePoint: CGPoint
+    }
+
+    /// Compute arrowhead geometry for any start/end pair (used by rendering + CALayer code).
+    static func arrowGeometry(from start: CGPoint, to end: CGPoint,
+                              headLength: CGFloat = 20.0, headAngle: CGFloat = .pi / 6) -> ArrowGeometry {
+        let angle = atan2(end.y - start.y, end.x - start.x)
+        let p1 = CGPoint(x: end.x - headLength * cos(angle + headAngle),
+                         y: end.y - headLength * sin(angle + headAngle))
+        let p2 = CGPoint(x: end.x - headLength * cos(angle - headAngle),
+                         y: end.y - headLength * sin(angle - headAngle))
+        let base = CGPoint(x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2)
+        return ArrowGeometry(point1: p1, point2: p2, basePoint: base)
+    }
+
     func draw(in context: CGContext) {
         context.setStrokeColor(color)
         context.setFillColor(color)
@@ -50,34 +69,18 @@ class ArrowAnnotation: Annotation {
         context.setLineCap(.round)
         context.setLineJoin(.round)
 
-        // Calculate arrow head
-        let angle = atan2(endPoint.y - startPoint.y, endPoint.x - startPoint.x)
-
-        let arrowPoint1 = CGPoint(
-            x: endPoint.x - arrowHeadLength * cos(angle + arrowHeadAngle),
-            y: endPoint.y - arrowHeadLength * sin(angle + arrowHeadAngle)
-        )
-
-        let arrowPoint2 = CGPoint(
-            x: endPoint.x - arrowHeadLength * cos(angle - arrowHeadAngle),
-            y: endPoint.y - arrowHeadLength * sin(angle - arrowHeadAngle)
-        )
-
-        // Calculate where line should stop (at base of arrowhead)
-        let arrowBasePoint = CGPoint(
-            x: (arrowPoint1.x + arrowPoint2.x) / 2,
-            y: (arrowPoint1.y + arrowPoint2.y) / 2
-        )
+        let geo = ArrowAnnotation.arrowGeometry(from: startPoint, to: endPoint,
+                                                 headLength: arrowHeadLength, headAngle: arrowHeadAngle)
 
         // Draw the line (stop at arrow base, not tip)
         context.move(to: startPoint)
-        context.addLine(to: arrowBasePoint)
+        context.addLine(to: geo.basePoint)
         context.strokePath()
 
         // Draw filled arrow head
         context.move(to: endPoint)
-        context.addLine(to: arrowPoint1)
-        context.addLine(to: arrowPoint2)
+        context.addLine(to: geo.point1)
+        context.addLine(to: geo.point2)
         context.closePath()
         context.fillPath()
     }

@@ -4,8 +4,6 @@ import ScreenCaptureKit
 
 class ScreenCaptureManager {
     private var overlayWindows: [SelectionOverlayWindow] = []
-    private var editorWindow: NSWindow?
-    private var canvasView: AnnotationCanvasView?
     private var previousApp: NSRunningApplication?
 
     func startCapture() {
@@ -58,9 +56,9 @@ class ScreenCaptureManager {
             logDebug("Capturing rect: \(captureRect)")
 
             // Capture the screen region
-            guard let cgImage = captureScreen(rect: captureRect) else {
+            guard let cgImage = captureScreen(rect: captureRect, screenFrame: screenFrame) else {
                 logError("Failed to capture screen - CGWindowListCreateImage returned nil")
-                cleanupOverlays()
+                showCaptureError("Screen capture failed. Check screen recording permissions in System Settings.")
                 return
             }
 
@@ -78,6 +76,11 @@ class ScreenCaptureManager {
 
             // Save to file
             saveImageToFile(nsImage)
+
+            // Play capture sound
+            if AppSettings.shared.playSound {
+                NSSound(named: .init("Tink"))?.play()
+            }
         }
 
         cleanupOverlays()
@@ -97,9 +100,9 @@ class ScreenCaptureManager {
             }
         }
 
-        // Generate filename with timestamp
+        // Generate filename with timestamp (millisecond precision to avoid collisions)
         let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
+        formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss-SSS"
         let timestamp = formatter.string(from: Date())
         let filename = "ScreenGrab_\(timestamp).png"
         let filePath = (savePath as NSString).appendingPathComponent(filename)
@@ -194,10 +197,10 @@ class ScreenCaptureManager {
         return finalImage
     }
 
-    private func captureScreen(rect: CGRect) -> CGImage? {
+    private func captureScreen(rect: CGRect, screenFrame: CGRect) -> CGImage? {
         // Try ScreenCaptureKit first (macOS 14+), fallback to CGWindowListCreateImage
         if #available(macOS 14.0, *) {
-            if let image = captureWithScreenCaptureKit(rect: rect) {
+            if let image = captureWithScreenCaptureKit(rect: rect, screenFrame: screenFrame) {
                 return image
             }
         }
@@ -207,15 +210,20 @@ class ScreenCaptureManager {
     }
 
     @available(macOS 14.0, *)
-    private func captureWithScreenCaptureKit(rect: CGRect) -> CGImage? {
+    private func captureWithScreenCaptureKit(rect: CGRect, screenFrame: CGRect) -> CGImage? {
         let box = UnsafeMutablePointer<CGImage?>.allocate(capacity: 1)
         box.initialize(to: nil)
         let semaphore = DispatchSemaphore(value: 0)
 
-        Task {
+        Task { @Sendable in
             do {
                 let content = try await SCShareableContent.current
-                guard let display = content.displays.first else {
+
+                // Find the display matching the screen where the user made their selection
+                guard let display = content.displays.first(where: { display in
+                    return abs(display.frame.origin.x - screenFrame.origin.x) < 1
+                        && abs(CGFloat(display.width) - screenFrame.width) < 1
+                }) ?? content.displays.first else {
                     logError("No display found")
                     semaphore.signal()
                     return
@@ -232,8 +240,8 @@ class ScreenCaptureManager {
                 // rect is already in screen coordinates (top-left origin)
                 let scale = CGFloat(fullImage.width) / CGFloat(display.width)
                 let cropRect = CGRect(
-                    x: rect.origin.x * scale,
-                    y: rect.origin.y * scale,
+                    x: (rect.origin.x - display.frame.origin.x) * scale,
+                    y: (rect.origin.y - display.frame.origin.y) * scale,
                     width: rect.width * scale,
                     height: rect.height * scale
                 )
@@ -251,60 +259,15 @@ class ScreenCaptureManager {
         return result
     }
 
-    private func openAnnotationEditor(with image: NSImage) {
-        // Create window sized to image (with some max bounds)
-        let maxSize = NSSize(width: 1200, height: 800)
-        let imageWidth = max(image.size.width, 100)
-        let imageHeight = max(image.size.height, 100)
-        let windowSize = NSSize(
-            width: min(imageWidth + 40, maxSize.width),
-            height: min(imageHeight + 100, maxSize.height)
-        )
-
-        let window = NSWindow(
-            contentRect: NSRect(origin: .zero, size: windowSize),
-            styleMask: [.titled, .closable, .resizable],
-            backing: .buffered,
-            defer: false
-        )
-
-        window.title = "Annotate Screenshot"
-        window.center()
-        window.isReleasedWhenClosed = false
-
-        // Create canvas view
-        let canvas = AnnotationCanvasView(image: image)
-        canvas.frame = NSRect(origin: .zero, size: image.size)
-        canvas.onComplete = { [weak self] finalImage in
-            ClipboardManager.copy(image: finalImage)
-            self?.editorWindow?.close()
-            self?.editorWindow = nil
+    private func showCaptureError(_ message: String) {
+        DispatchQueue.main.async {
+            let alert = NSAlert()
+            alert.messageText = "Screenshot Failed"
+            alert.informativeText = message
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
         }
-        canvas.onCancel = { [weak self] in
-            self?.editorWindow?.close()
-            self?.editorWindow = nil
-        }
-        self.canvasView = canvas
-
-        // Create scroll view
-        let scrollViewFrame = window.contentView?.bounds ?? .zero
-        let scrollView = NSScrollView(frame: scrollViewFrame)
-        scrollView.autoresizingMask = [.width, .height]
-        scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = true
-        scrollView.autohidesScrollers = true
-        scrollView.backgroundColor = NSColor.windowBackgroundColor
-        scrollView.documentView = canvas
-
-        window.contentView = scrollView
-
-        // Store and show window
-        self.editorWindow = window
-
-        window.makeKeyAndOrderFront(nil)
-        window.makeFirstResponder(canvas)
-
-        NSApp.activate(ignoringOtherApps: true)
     }
 
     private func closeOverlays() {

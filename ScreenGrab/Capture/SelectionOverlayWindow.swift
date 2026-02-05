@@ -381,21 +381,13 @@ class SelectionView: NSView {
     /// Returns the full visual bounding rect for an annotation, including arrowhead extent.
     private func visualBounds(for annotation: any Annotation) -> CGRect {
         if let arrow = annotation as? ArrowAnnotation {
-            let angle = atan2(arrow.endPoint.y - arrow.startPoint.y, arrow.endPoint.x - arrow.startPoint.x)
-            let arrowPoint1 = CGPoint(
-                x: arrow.endPoint.x - arrow.arrowHeadLength * cos(angle + arrow.arrowHeadAngle),
-                y: arrow.endPoint.y - arrow.arrowHeadLength * sin(angle + arrow.arrowHeadAngle)
-            )
-            let arrowPoint2 = CGPoint(
-                x: arrow.endPoint.x - arrow.arrowHeadLength * cos(angle - arrow.arrowHeadAngle),
-                y: arrow.endPoint.y - arrow.arrowHeadLength * sin(angle - arrow.arrowHeadAngle)
-            )
-            let allX = [arrow.startPoint.x, arrow.endPoint.x, arrowPoint1.x, arrowPoint2.x]
-            let allY = [arrow.startPoint.y, arrow.endPoint.y, arrowPoint1.y, arrowPoint2.y]
-            return CGRect(
-                x: allX.min()!, y: allY.min()!,
-                width: allX.max()! - allX.min()!, height: allY.max()! - allY.min()!
-            )
+            let geo = ArrowAnnotation.arrowGeometry(from: arrow.startPoint, to: arrow.endPoint,
+                                                     headLength: arrow.arrowHeadLength, headAngle: arrow.arrowHeadAngle)
+            let allX = [arrow.startPoint.x, arrow.endPoint.x, geo.point1.x, geo.point2.x]
+            let allY = [arrow.startPoint.y, arrow.endPoint.y, geo.point1.y, geo.point2.y]
+            let minX = allX.min() ?? 0, maxX = allX.max() ?? 0
+            let minY = allY.min() ?? 0, maxY = allY.max() ?? 0
+            return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
         }
         return annotation.bounds
     }
@@ -1624,34 +1616,17 @@ class SelectionView: NSView {
         let path = CGMutablePath()
 
         if let arrow = annotation as? ArrowAnnotation {
-            // Draw arrow line (stop at base of arrowhead)
-            let angle = atan2(arrow.endPoint.y - arrow.startPoint.y, arrow.endPoint.x - arrow.startPoint.x)
-            let arrowHeadLength: CGFloat = 20.0
-            let arrowHeadAngle: CGFloat = .pi / 6
-
-            let arrowPoint1 = CGPoint(
-                x: arrow.endPoint.x - arrowHeadLength * cos(angle + arrowHeadAngle),
-                y: arrow.endPoint.y - arrowHeadLength * sin(angle + arrowHeadAngle)
-            )
-            let arrowPoint2 = CGPoint(
-                x: arrow.endPoint.x - arrowHeadLength * cos(angle - arrowHeadAngle),
-                y: arrow.endPoint.y - arrowHeadLength * sin(angle - arrowHeadAngle)
-            )
-
-            // Line stops at arrow base
-            let arrowBasePoint = CGPoint(
-                x: (arrowPoint1.x + arrowPoint2.x) / 2,
-                y: (arrowPoint1.y + arrowPoint2.y) / 2
-            )
+            let geo = ArrowAnnotation.arrowGeometry(from: arrow.startPoint, to: arrow.endPoint,
+                                                     headLength: arrow.arrowHeadLength, headAngle: arrow.arrowHeadAngle)
             path.move(to: arrow.startPoint)
-            path.addLine(to: arrowBasePoint)
+            path.addLine(to: geo.basePoint)
 
             // Update arrowhead layer with filled triangle
             if let headLayer = arrowHeadLayers[arrow.id] {
                 let headPath = CGMutablePath()
                 headPath.move(to: arrow.endPoint)
-                headPath.addLine(to: arrowPoint1)
-                headPath.addLine(to: arrowPoint2)
+                headPath.addLine(to: geo.point1)
+                headPath.addLine(to: geo.point2)
                 headPath.closeSubpath()
                 headLayer.path = headPath
             }
@@ -1756,25 +1731,9 @@ class SelectionView: NSView {
 
         let path = CGMutablePath()
         if currentDrawingTool == .arrow {
-            let angle = atan2(end.y - start.y, end.x - start.x)
-            let arrowHeadLength: CGFloat = 20.0
-            let arrowHeadAngle: CGFloat = .pi / 6
-            let arrowPoint1 = CGPoint(
-                x: end.x - arrowHeadLength * cos(angle + arrowHeadAngle),
-                y: end.y - arrowHeadLength * sin(angle + arrowHeadAngle)
-            )
-            let arrowPoint2 = CGPoint(
-                x: end.x - arrowHeadLength * cos(angle - arrowHeadAngle),
-                y: end.y - arrowHeadLength * sin(angle - arrowHeadAngle)
-            )
-
-            // Line stops at arrow base
-            let arrowBasePoint = CGPoint(
-                x: (arrowPoint1.x + arrowPoint2.x) / 2,
-                y: (arrowPoint1.y + arrowPoint2.y) / 2
-            )
+            let geo = ArrowAnnotation.arrowGeometry(from: start, to: end)
             path.move(to: start)
-            path.addLine(to: arrowBasePoint)
+            path.addLine(to: geo.basePoint)
 
             // Create/update filled arrowhead layer
             if drawingPreviewHeadLayer == nil {
@@ -1788,8 +1747,8 @@ class SelectionView: NSView {
 
             let headPath = CGMutablePath()
             headPath.move(to: end)
-            headPath.addLine(to: arrowPoint1)
-            headPath.addLine(to: arrowPoint2)
+            headPath.addLine(to: geo.point1)
+            headPath.addLine(to: geo.point2)
             headPath.closeSubpath()
             drawingPreviewHeadLayer?.path = headPath
         } else {

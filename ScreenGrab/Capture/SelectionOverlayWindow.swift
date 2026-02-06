@@ -119,6 +119,7 @@ class SelectionView: NSView {
     // Text editing state
     private var editingTextAnnotation: TextAnnotation?
     private var editingTextLayer: CATextLayer?
+    private var isTextAllSelected = false
 
     // Hover-to-select in drawing modes
     private var hoveredAnnotation: (any Annotation)?
@@ -136,6 +137,8 @@ class SelectionView: NSView {
 
     private var annotationColor = NSColor.red.cgColor
     private let strokeWidth: CGFloat = 3.0
+    private var textFontSize: CGFloat = 24
+    private let fontSizeRange: ClosedRange<CGFloat> = 10...120
 
     private let colorPalette: [NSColor] = [
         .red, .systemOrange, .systemYellow, .systemGreen, .systemBlue, .systemPurple,
@@ -720,6 +723,28 @@ class SelectionView: NSView {
                 syncAnnotationLayers()
                 needsDisplay = true
             }
+        case 33: // [ - decrease font size
+            if let textAnn = selectedAnnotation as? TextAnnotation {
+                pushUndoState()
+                textAnn.fontSize = (textAnn.fontSize - 2).clampedTo(fontSizeRange)
+                textFontSize = textAnn.fontSize
+                syncAnnotationLayers()
+                needsDisplay = true
+            } else {
+                textFontSize = (textFontSize - 2).clampedTo(fontSizeRange)
+                needsDisplay = true
+            }
+        case 30: // ] - increase font size
+            if let textAnn = selectedAnnotation as? TextAnnotation {
+                pushUndoState()
+                textAnn.fontSize = (textAnn.fontSize + 2).clampedTo(fontSizeRange)
+                textFontSize = textAnn.fontSize
+                syncAnnotationLayers()
+                needsDisplay = true
+            } else {
+                textFontSize = (textFontSize + 2).clampedTo(fontSizeRange)
+                needsDisplay = true
+            }
         default:
             break
         }
@@ -728,22 +753,31 @@ class SelectionView: NSView {
     private func handleTextKeyEvent(_ event: NSEvent) {
         guard let annotation = editingTextAnnotation else { return }
 
-        switch event.keyCode {
-        case 53: // ESC - cancel current text (discard)
-            // The annotation was already removed from the array in beginEditingTextAnnotation
-            // (which also pushed undo), so just clean up editing UI.
-            // No extra undo push needed — the state before editing is already on the stack.
-            editingTextLayer?.removeFromSuperlayer()
-            editingTextLayer = nil
-            editingTextAnnotation = nil
-            textEditUndoAlreadyPushed = false
-        case 36, 76: // Return / Enter - commit text
-            commitTextAnnotation()
-        case 51: // Delete/Backspace
+        // Cmd+A = select all
+        if event.modifierFlags.contains(.command) && event.keyCode == 0 { // A key
             if !annotation.text.isEmpty {
-                annotation.text = String(annotation.text.dropLast())
+                isTextAllSelected = true
                 updateEditingTextLayer()
             }
+            return
+        }
+
+        switch event.keyCode {
+        case 53, 36, 76: // ESC / Return / Enter - commit text
+            isTextAllSelected = false
+            commitTextAnnotation()
+        case 51: // Delete/Backspace
+            if isTextAllSelected {
+                annotation.text = ""
+                isTextAllSelected = false
+            } else if !annotation.text.isEmpty {
+                annotation.text = String(annotation.text.dropLast())
+            }
+            updateEditingTextLayer()
+        case 33: // [ - decrease font size
+            adjustFontSize(by: -2, for: annotation)
+        case 30: // ] - increase font size
+            adjustFontSize(by: 2, for: annotation)
         default:
             // Append typed characters
             if let chars = event.characters, !chars.isEmpty {
@@ -754,16 +788,30 @@ class SelectionView: NSView {
                     return true // non-ASCII (emoji, unicode) is fine
                 }
                 if !filtered.isEmpty {
-                    annotation.text += filtered
+                    if isTextAllSelected {
+                        annotation.text = filtered
+                        isTextAllSelected = false
+                    } else {
+                        annotation.text += filtered
+                    }
                     updateEditingTextLayer()
                 }
             }
         }
     }
 
+    private func adjustFontSize(by delta: CGFloat, for annotation: TextAnnotation) {
+        let newSize = (annotation.fontSize + delta).clampedTo(fontSizeRange)
+        annotation.fontSize = newSize
+        textFontSize = newSize
+        updateEditingTextLayer()
+        needsDisplay = true
+    }
+
     private func beginEditingTextAnnotation(_ annotation: TextAnnotation) {
         pushUndoState()
         textEditUndoAlreadyPushed = true
+        isTextAllSelected = false
 
         // Remove from committed annotations and its layer
         annotations.removeAll { $0.id == annotation.id }
@@ -824,7 +872,20 @@ class SelectionView: NSView {
 
         let displayText = annotation.text.isEmpty ? "|" : annotation.text + "|"
         let attrs = annotation.textAttributes()
-        textLayer.string = NSAttributedString(string: displayText, attributes: attrs)
+
+        if isTextAllSelected && !annotation.text.isEmpty {
+            // Show selection highlight: white text on blue background
+            let selectedPart = annotation.text
+            let cursor = "|"
+            let attrStr = NSMutableAttributedString(string: selectedPart, attributes: attrs)
+            attrStr.addAttribute(.backgroundColor, value: NSColor.selectedTextBackgroundColor, range: NSRange(location: 0, length: selectedPart.count))
+            attrStr.addAttribute(.foregroundColor, value: NSColor.white, range: NSRange(location: 0, length: selectedPart.count))
+            let cursorAttrs = attrs
+            attrStr.append(NSAttributedString(string: cursor, attributes: cursorAttrs))
+            textLayer.string = attrStr
+        } else {
+            textLayer.string = NSAttributedString(string: displayText, attributes: attrs)
+        }
 
         let size = (displayText as NSString).size(withAttributes: attrs)
         textLayer.bounds = CGRect(x: 0, y: 0, width: size.width + 4, height: size.height + 4)
@@ -950,20 +1011,14 @@ class SelectionView: NSView {
 
         switch currentMode {
         case .select:
-            // Double-click on a text annotation to edit it
-            if event.clickCount == 2 {
-                for annotation in annotations.reversed() {
-                    if let textAnnotation = annotation as? TextAnnotation,
-                       textAnnotation.contains(point: point) {
-                        beginEditingTextAnnotation(textAnnotation)
-                        return
-                    }
-                }
-            }
-
             // Check if clicking on an annotation
             for annotation in annotations.reversed() {
                 if let handle = annotation.hitTest(point: point) {
+                    // Double-click on text annotation enters edit mode
+                    if event.clickCount == 2, let textAnnotation = annotation as? TextAnnotation {
+                        beginEditingTextAnnotation(textAnnotation)
+                        return
+                    }
                     pushUndoState()
                     selectedAnnotation = annotation
                     activeHandle = handle
@@ -1042,11 +1097,12 @@ class SelectionView: NSView {
             for annotation in annotations.reversed() {
                 let rect = visualBounds(for: annotation).insetBy(dx: -4, dy: -4)
                 if rect.contains(point) {
-                    // Double-click on text to edit it
+                    // Double-click on text annotation enters edit mode
                     if event.clickCount == 2, let textAnnotation = annotation as? TextAnnotation {
                         beginEditingTextAnnotation(textAnnotation)
                         return
                     }
+                    // Single-click: select and drag
                     pushUndoState()
                     selectedAnnotation = annotation
                     let handle = annotation.hitTest(point: point) ?? .body
@@ -1075,7 +1131,7 @@ class SelectionView: NSView {
             selectedAnnotation = nil
             selectionHandleLayer?.removeFromSuperlayer()
             selectionHandleLayer = nil
-            let annotation = TextAnnotation(position: point, color: annotationColor)
+            let annotation = TextAnnotation(position: point, fontSize: textFontSize, color: annotationColor)
             editingTextAnnotation = annotation
 
             let textLayer = createEditingTextLayer(for: annotation)
@@ -1565,10 +1621,39 @@ class SelectionView: NSView {
         circleBorder.lineWidth = 1.5
         circleBorder.stroke()
 
+        // Draw font size indicator when in text mode
+        if currentMode == .text || editingTextAnnotation != nil {
+            drawFontSizeIndicator(below: toolbar)
+        }
+
         // Draw color popover if visible
         if isColorPopoverVisible {
             drawColorPopover()
         }
+    }
+
+    private func drawFontSizeIndicator(below toolbar: NSRect) {
+        let displaySize = editingTextAnnotation?.fontSize ?? textFontSize
+        let label = "[ \(Int(displaySize))pt ]"
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .medium),
+            .foregroundColor: NSColor.white.withAlphaComponent(0.8)
+        ]
+        let size = label.size(withAttributes: attrs)
+        let bgWidth = size.width + 12
+        let bgHeight = size.height + 6
+        let bgRect = NSRect(
+            x: toolbar.midX - bgWidth / 2,
+            y: toolbar.minY - bgHeight - 4,
+            width: bgWidth,
+            height: bgHeight
+        )
+        NSColor.black.withAlphaComponent(0.75).setFill()
+        NSBezierPath(roundedRect: bgRect, xRadius: 6, yRadius: 6).fill()
+        label.draw(
+            at: NSPoint(x: bgRect.midX - size.width / 2, y: bgRect.minY + 3),
+            withAttributes: attrs
+        )
     }
 
     private func drawColorPopover() {
@@ -1936,5 +2021,11 @@ class SelectionView: NSView {
                 annotationLayers[annotation.id] = newLayer
             }
         }
+    }
+}
+
+private extension CGFloat {
+    func clampedTo(_ range: ClosedRange<CGFloat>) -> CGFloat {
+        return Swift.min(Swift.max(self, range.lowerBound), range.upperBound)
     }
 }

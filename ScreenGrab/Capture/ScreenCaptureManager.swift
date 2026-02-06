@@ -6,6 +6,12 @@ class ScreenCaptureManager {
     private var overlayWindows: [SelectionOverlayWindow] = []
     private var previousApp: NSRunningApplication?
 
+    private static let timestampFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd_HH-mm-ss-SSS"
+        return f
+    }()
+
     func startCapture() {
         // Close any existing overlays
         closeOverlays()
@@ -96,14 +102,13 @@ class ScreenCaptureManager {
                 try fileManager.createDirectory(atPath: savePath, withIntermediateDirectories: true)
             } catch {
                 logError("Failed to create save directory: \(error)")
+                showCaptureError("Could not create save directory: \(savePath)")
                 return
             }
         }
 
         // Generate filename with timestamp (millisecond precision to avoid collisions)
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss-SSS"
-        let timestamp = formatter.string(from: Date())
+        let timestamp = Self.timestampFormatter.string(from: Date())
         let filename = "ScreenGrab_\(timestamp).png"
         let filePath = (savePath as NSString).appendingPathComponent(filename)
 
@@ -120,6 +125,7 @@ class ScreenCaptureManager {
             logInfo("Saved screenshot to \(filePath)")
         } catch {
             logError("Failed to save screenshot: \(error)")
+            showCaptureError("Could not save screenshot to \(filePath)")
         }
     }
 
@@ -209,10 +215,13 @@ class ScreenCaptureManager {
         return CGWindowListCreateImage(rect, .optionOnScreenBelowWindow, kCGNullWindowID, [.bestResolution])
     }
 
+    private class ImageBox: @unchecked Sendable {
+        var image: CGImage?
+    }
+
     @available(macOS 14.0, *)
     private func captureWithScreenCaptureKit(rect: CGRect, screenFrame: CGRect) -> CGImage? {
-        let box = UnsafeMutablePointer<CGImage?>.allocate(capacity: 1)
-        box.initialize(to: nil)
+        let box = ImageBox()
         let semaphore = DispatchSemaphore(value: 0)
 
         Task { @Sendable in
@@ -246,7 +255,14 @@ class ScreenCaptureManager {
                     height: rect.height * scale
                 )
 
-                box.pointee = fullImage.cropping(to: cropRect)
+                // Clamp crop rect to image bounds to prevent nil from cropping(to:)
+                let clampedRect = cropRect.intersection(CGRect(x: 0, y: 0, width: fullImage.width, height: fullImage.height))
+                guard !clampedRect.isNull && clampedRect.width > 0 && clampedRect.height > 0 else {
+                    logError("Crop rect outside image bounds: \(cropRect) vs \(fullImage.width)x\(fullImage.height)")
+                    semaphore.signal()
+                    return
+                }
+                box.image = fullImage.cropping(to: clampedRect)
             } catch {
                 logError("ScreenCaptureKit error: \(error)")
             }
@@ -254,9 +270,7 @@ class ScreenCaptureManager {
         }
 
         _ = semaphore.wait(timeout: .now() + 5)
-        let result = box.pointee
-        box.deallocate()
-        return result
+        return box.image
     }
 
     private func showCaptureError(_ message: String) {

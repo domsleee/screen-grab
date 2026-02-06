@@ -72,7 +72,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.center()
         window.isReleasedWhenClosed = false
 
-        let contentView = NSView(frame: window.contentView!.bounds)
+        guard let windowContentView = window.contentView else { return }
+        let contentView = NSView(frame: windowContentView.bounds)
         contentView.autoresizingMask = [.width, .height]
 
         // "Save to:" label

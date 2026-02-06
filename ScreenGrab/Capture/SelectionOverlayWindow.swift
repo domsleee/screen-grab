@@ -173,9 +173,10 @@ class SelectionView: NSView {
         path.line(to: NSPoint(x: size - 7, y: 3))
         // Draw black outline first, then white
         NSColor.black.setStroke()
-        let outline = path.copy() as! NSBezierPath
-        outline.lineWidth = 3.0
-        outline.stroke()
+        if let outline = path.copy() as? NSBezierPath {
+            outline.lineWidth = 3.0
+            outline.stroke()
+        }
         NSColor.white.setStroke()
         path.stroke()
         image.unlockFocus()
@@ -203,9 +204,10 @@ class SelectionView: NSView {
         path.line(to: NSPoint(x: 3, y: 7))
         // Draw black outline first, then white
         NSColor.black.setStroke()
-        let outline = path.copy() as! NSBezierPath
-        outline.lineWidth = 3.0
-        outline.stroke()
+        if let outline = path.copy() as? NSBezierPath {
+            outline.lineWidth = 3.0
+            outline.stroke()
+        }
         NSColor.white.setStroke()
         path.stroke()
         image.unlockFocus()
@@ -616,6 +618,9 @@ class SelectionView: NSView {
     }
 
     func setupMonitors() {
+        // Remove any existing monitors to prevent duplicates
+        stopMonitors()
+
         keyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
             self?.handleKeyEvent(event)
         }
@@ -655,6 +660,20 @@ class SelectionView: NSView {
     private func handleKeyEvent(_ event: NSEvent) {
         // Cmd+Z = undo, Cmd+Shift+Z = redo (works in all modes)
         if event.modifierFlags.contains(.command) && event.keyCode == 6 { // Z key
+            // Cancel any in-progress drawing first
+            if isDrawingAnnotation {
+                isDrawingAnnotation = false
+                clearDrawingPreviewLayer()
+                annotationStart = nil
+                annotationEnd = nil
+            }
+            // Cancel any in-progress text editing (discard uncommitted text)
+            if editingTextAnnotation != nil {
+                editingTextLayer?.removeFromSuperlayer()
+                editingTextLayer = nil
+                editingTextAnnotation = nil
+                textEditUndoAlreadyPushed = false
+            }
             if event.modifierFlags.contains(.shift) {
                 performRedo()
             } else {
@@ -711,9 +730,13 @@ class SelectionView: NSView {
 
         switch event.keyCode {
         case 53: // ESC - cancel current text (discard)
+            // The annotation was already removed from the array in beginEditingTextAnnotation
+            // (which also pushed undo), so just clean up editing UI.
+            // No extra undo push needed — the state before editing is already on the stack.
             editingTextLayer?.removeFromSuperlayer()
             editingTextLayer = nil
             editingTextAnnotation = nil
+            textEditUndoAlreadyPushed = false
         case 36, 76: // Return / Enter - commit text
             commitTextAnnotation()
         case 51: // Delete/Backspace
@@ -773,7 +796,8 @@ class SelectionView: NSView {
     private func commitTextAnnotation() {
         guard let annotation = editingTextAnnotation else { return }
 
-        if !textEditUndoAlreadyPushed {
+        // Only push undo if text is non-empty (otherwise nothing changes)
+        if !annotation.text.isEmpty && !textEditUndoAlreadyPushed {
             pushUndoState()
         }
         textEditUndoAlreadyPushed = false
@@ -849,7 +873,8 @@ class SelectionView: NSView {
                 return .text(id: text.id, text: text.text, position: text.position,
                              fontSize: text.fontSize, color: text.color)
             }
-            fatalError("Unknown annotation type")
+            // Unknown annotation type — skip rather than crash
+            return .rectangle(id: UUID(), bounds: .zero, color: CGColor(red: 0, green: 0, blue: 0, alpha: 0), strokeWidth: 0)
         }
     }
 
@@ -866,10 +891,18 @@ class SelectionView: NSView {
             }
         }
 
-        // Re-select the previously selected annotation if it still exists
+        // Clear any stale editing state
+        editingTextLayer?.removeFromSuperlayer()
+        editingTextLayer = nil
+        editingTextAnnotation = nil
+        textEditUndoAlreadyPushed = false
+
+        // Re-select the previously selected annotation if it still exists, else clear
         if let selectedId = selectedAnnotation?.id {
             selectedAnnotation = annotations.first { $0.id == selectedId }
-        } else {
+            // If no match found, explicitly nil out (don't keep stale reference)
+        }
+        if selectedAnnotation != nil && !annotations.contains(where: { $0.id == selectedAnnotation!.id }) {
             selectedAnnotation = nil
         }
 
@@ -1378,12 +1411,16 @@ class SelectionView: NSView {
 
     private func applyColor(_ color: CGColor) {
         annotationColor = color
-        // Persist
+        // Persist — convert to device RGB to ensure 4 components
+        let rgbSpace = CGColorSpaceCreateDeviceRGB()
         if let components = color.components, color.numberOfComponents == 4 {
             AppSettings.shared.annotationColorRGBA = components
-        } else if let converted = color.converted(to: CGColorSpaceCreateDeviceRGB(), intent: .defaultIntent, options: nil),
+        } else if let converted = color.converted(to: rgbSpace, intent: .defaultIntent, options: nil),
                   let components = converted.components, converted.numberOfComponents == 4 {
             AppSettings.shared.annotationColorRGBA = components
+        } else {
+            // Last resort: save as opaque red so we never lose the setting
+            AppSettings.shared.annotationColorRGBA = [1.0, 0.0, 0.0, 1.0]
         }
         if let selected = selectedAnnotation {
             pushUndoState()
@@ -1487,12 +1524,13 @@ class SelectionView: NSView {
                 let iconX = btnRect.midX - iconSize.width / 2
                 let iconY = btnRect.midY - iconSize.height / 2 + 5
                 let tintColor: NSColor = isActive ? .white : .white.withAlphaComponent(0.6)
-                let tinted = icon.copy() as! NSImage
-                tinted.lockFocus()
-                tintColor.set()
-                NSRect(origin: .zero, size: tinted.size).fill(using: .sourceAtop)
-                tinted.unlockFocus()
-                tinted.draw(in: NSRect(x: iconX, y: iconY, width: iconSize.width, height: iconSize.height))
+                if let tinted = icon.copy() as? NSImage {
+                    tinted.lockFocus()
+                    tintColor.set()
+                    NSRect(origin: .zero, size: tinted.size).fill(using: .sourceAtop)
+                    tinted.unlockFocus()
+                    tinted.draw(in: NSRect(x: iconX, y: iconY, width: iconSize.width, height: iconSize.height))
+                }
             }
 
             // Draw shortcut label below icon
@@ -1554,7 +1592,7 @@ class SelectionView: NSView {
         // Draw swatches
         for (index, color) in colorPalette.enumerated() {
             let swatchRect = popoverSwatchRect(at: index)
-            let isActive = color.cgColor == annotationColor
+            let isActive = colorsMatch(color.cgColor, annotationColor)
 
             // Selection indicator
             if isActive {
@@ -1588,6 +1626,16 @@ class SelectionView: NSView {
             at: NSPoint(x: customBtn.midX - textSize.width / 2, y: customBtn.minY + (customBtn.height - textSize.height) / 2),
             withAttributes: customAttrs
         )
+    }
+
+    private func colorsMatch(_ a: CGColor, _ b: CGColor) -> Bool {
+        // Convert both to device RGB for reliable comparison across color spaces
+        let rgbSpace = CGColorSpaceCreateDeviceRGB()
+        guard let ac = a.converted(to: rgbSpace, intent: .defaultIntent, options: nil),
+              let bc = b.converted(to: rgbSpace, intent: .defaultIntent, options: nil),
+              let aComps = ac.components, let bComps = bc.components,
+              aComps.count == bComps.count else { return false }
+        return zip(aComps, bComps).allSatisfy { abs($0 - $1) < 0.01 }
     }
 
     private func rectFromPoints(_ p1: NSPoint, _ p2: NSPoint) -> NSRect {

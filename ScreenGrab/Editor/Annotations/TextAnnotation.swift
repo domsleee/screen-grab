@@ -45,6 +45,14 @@ class TextAnnotation: Annotation {
         return bounds.insetBy(dx: -5, dy: -5).contains(point)
     }
 
+    func hitTest(point: CGPoint) -> AnnotationHandle? {
+        // Text annotations only support move (no resize handles)
+        if contains(point: point) {
+            return .body
+        }
+        return nil
+    }
+
     func textAttributes() -> [NSAttributedString.Key: Any] {
         return [
             .font: NSFont.systemFont(ofSize: fontSize, weight: .bold),

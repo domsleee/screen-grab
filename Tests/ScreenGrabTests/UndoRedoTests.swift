@@ -21,7 +21,8 @@ private class UndoRedoModel {
                 return .rectangle(id: rect.id, bounds: rect.bounds, color: rect.color, strokeWidth: rect.strokeWidth)
             } else if let text = annotation as? TextAnnotation {
                 return .text(id: text.id, text: text.text, position: text.position,
-                             fontSize: text.fontSize, color: text.color)
+                             fontSize: text.fontSize, color: text.color, backgroundColor: text.backgroundColor,
+                             backgroundPadding: text.backgroundPadding)
             }
             fatalError("Unknown annotation type")
         }
@@ -35,8 +36,8 @@ private class UndoRedoModel {
                                        color: color, strokeWidth: strokeWidth)
             case .rectangle(let id, let bounds, let color, let strokeWidth):
                 return RectangleAnnotation(id: id, bounds: bounds, color: color, strokeWidth: strokeWidth)
-            case .text(let id, let text, let position, let fontSize, let color):
-                return TextAnnotation(id: id, text: text, position: position, fontSize: fontSize, color: color)
+            case .text(let id, let text, let position, let fontSize, let color, let backgroundColor, let backgroundPadding):
+                return TextAnnotation(id: id, text: text, position: position, fontSize: fontSize, color: color, backgroundColor: backgroundColor, backgroundPadding: backgroundPadding)
             }
         }
 
@@ -79,9 +80,9 @@ private class UndoRedoModel {
     }
 
     // Simulate adding a text annotation
-    func addText(text: String, position: CGPoint, color: CGColor = NSColor.red.cgColor) {
+    func addText(text: String, position: CGPoint, color: CGColor = NSColor.red.cgColor, backgroundColor: CGColor? = nil) {
         pushUndoState()
-        let annotation = TextAnnotation(text: text, position: position, color: color)
+        let annotation = TextAnnotation(text: text, position: position, color: color, backgroundColor: backgroundColor)
         annotations.append(annotation)
     }
 
@@ -382,6 +383,38 @@ final class UndoRedoTests: XCTestCase {
         let rect = model.annotations[0] as! RectangleAnnotation
         XCTAssertEqual(rect.bounds, bounds)
         XCTAssertEqual(rect.color.components, color.components)
+    }
+
+    // MARK: - Text Background Color Undo/Redo
+
+    func testTextBackgroundColorPreservedAcrossUndoRedo() {
+        let model = UndoRedoModel()
+        let bgColor = NSColor.yellow.withAlphaComponent(0.75).cgColor
+        model.addText(text: "With BG", position: CGPoint(x: 50, y: 50), backgroundColor: bgColor)
+
+        let text = model.annotations[0] as! TextAnnotation
+        XCTAssertNotNil(text.backgroundColor, "Should have background color set")
+
+        model.performUndo()
+        XCTAssertEqual(model.annotations.count, 0)
+
+        model.performRedo()
+        XCTAssertEqual(model.annotations.count, 1)
+        let restored = model.annotations[0] as! TextAnnotation
+        XCTAssertNotNil(restored.backgroundColor, "Background color should be preserved after undo/redo")
+        XCTAssertEqual(restored.backgroundColor?.components, bgColor.components,
+                       "Background color components should match")
+    }
+
+    func testTextWithNilBackgroundColorPreserved() {
+        let model = UndoRedoModel()
+        model.addText(text: "No BG", position: CGPoint(x: 50, y: 50))
+
+        model.performUndo()
+        model.performRedo()
+
+        let restored = model.annotations[0] as! TextAnnotation
+        XCTAssertNil(restored.backgroundColor, "Nil background color should stay nil after undo/redo")
     }
 
     // MARK: - Text Edit Undo Flag

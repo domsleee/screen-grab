@@ -84,6 +84,19 @@ final class AppSettings {
         set { defaults.set(newValue, forKey: "annotationColorRGBA") }
     }
 
+    var textBackgroundColorRGBA: [CGFloat]? {
+        get { defaults.array(forKey: "textBackgroundColorRGBA") as? [CGFloat] }
+        set { defaults.set(newValue, forKey: "textBackgroundColorRGBA") }
+    }
+
+    var textBackgroundOpacity: CGFloat {
+        get {
+            let val = defaults.double(forKey: "textBackgroundOpacity")
+            return val == 0 ? 0.75 : CGFloat(val)
+        }
+        set { defaults.set(Double(newValue), forKey: "textBackgroundOpacity") }
+    }
+
     var strokeWidth: Double {
         get { defaults.double(forKey: Key.strokeWidth.rawValue) }
         set { defaults.set(newValue, forKey: Key.strokeWidth.rawValue) }

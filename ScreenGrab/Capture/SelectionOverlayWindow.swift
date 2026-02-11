@@ -115,6 +115,7 @@ class SelectionView: NSView {
     private var dragStartBounds: CGRect?
     private var dragStartArrowStart: CGPoint?
     private var dragStartArrowEnd: CGPoint?
+    private var dragStartFontSize: CGFloat = 24
 
     // Text editing state
     private var editingTextAnnotation: TextAnnotation?
@@ -139,6 +140,13 @@ class SelectionView: NSView {
     private let strokeWidth: CGFloat = 3.0
     private var textFontSize: CGFloat = 24
     private let fontSizeRange: ClosedRange<CGFloat> = 10...120
+
+    // Text background color
+    private var textBackgroundColor: CGColor?  // nil = no fill
+    private var textBackgroundOpacity: CGFloat = 0.75
+    private var textBackgroundPadding: CGFloat = 4
+    private enum ColorTarget { case foreground, background }
+    private var activeColorTarget: ColorTarget = .foreground
 
     private let colorPalette: [NSColor] = [
         .red, .systemOrange, .systemYellow, .systemGreen, .systemBlue, .systemPurple,
@@ -235,6 +243,11 @@ class SelectionView: NSView {
         if let rgba = AppSettings.shared.annotationColorRGBA, rgba.count == 4 {
             annotationColor = CGColor(red: rgba[0], green: rgba[1], blue: rgba[2], alpha: rgba[3])
         }
+        // Load saved text background color
+        if let rgba = AppSettings.shared.textBackgroundColorRGBA, rgba.count == 4 {
+            textBackgroundColor = CGColor(red: rgba[0], green: rgba[1], blue: rgba[2], alpha: rgba[3])
+        }
+        textBackgroundOpacity = AppSettings.shared.textBackgroundOpacity
         wantsLayer = true
         layer?.drawsAsynchronously = true
         // Disable implicit animations for immediate updates
@@ -723,27 +736,57 @@ class SelectionView: NSView {
                 syncAnnotationLayers()
                 needsDisplay = true
             }
-        case 33: // [ - decrease font size
-            if let textAnn = selectedAnnotation as? TextAnnotation {
-                pushUndoState()
-                textAnn.fontSize = (textAnn.fontSize - 2).clampedTo(fontSizeRange)
-                textFontSize = textAnn.fontSize
-                syncAnnotationLayers()
-                needsDisplay = true
+        case 33: // [ or { (Shift+[)
+            if event.modifierFlags.contains(.shift) {
+                // Shift+[ — decrease background padding
+                if let textAnn = selectedAnnotation as? TextAnnotation {
+                    pushUndoState()
+                    textAnn.backgroundPadding = max(0, textAnn.backgroundPadding - 2)
+                    textBackgroundPadding = textAnn.backgroundPadding
+                    syncAnnotationLayers()
+                    needsDisplay = true
+                } else {
+                    textBackgroundPadding = max(0, textBackgroundPadding - 2)
+                    needsDisplay = true
+                }
             } else {
-                textFontSize = (textFontSize - 2).clampedTo(fontSizeRange)
-                needsDisplay = true
+                // [ — decrease font size
+                if let textAnn = selectedAnnotation as? TextAnnotation {
+                    pushUndoState()
+                    textAnn.fontSize = (textAnn.fontSize - 2).clampedTo(fontSizeRange)
+                    textFontSize = textAnn.fontSize
+                    syncAnnotationLayers()
+                    needsDisplay = true
+                } else {
+                    textFontSize = (textFontSize - 2).clampedTo(fontSizeRange)
+                    needsDisplay = true
+                }
             }
-        case 30: // ] - increase font size
-            if let textAnn = selectedAnnotation as? TextAnnotation {
-                pushUndoState()
-                textAnn.fontSize = (textAnn.fontSize + 2).clampedTo(fontSizeRange)
-                textFontSize = textAnn.fontSize
-                syncAnnotationLayers()
-                needsDisplay = true
+        case 30: // ] or } (Shift+])
+            if event.modifierFlags.contains(.shift) {
+                // Shift+] — increase background padding
+                if let textAnn = selectedAnnotation as? TextAnnotation {
+                    pushUndoState()
+                    textAnn.backgroundPadding = min(40, textAnn.backgroundPadding + 2)
+                    textBackgroundPadding = textAnn.backgroundPadding
+                    syncAnnotationLayers()
+                    needsDisplay = true
+                } else {
+                    textBackgroundPadding = min(40, textBackgroundPadding + 2)
+                    needsDisplay = true
+                }
             } else {
-                textFontSize = (textFontSize + 2).clampedTo(fontSizeRange)
-                needsDisplay = true
+                // ] — increase font size
+                if let textAnn = selectedAnnotation as? TextAnnotation {
+                    pushUndoState()
+                    textAnn.fontSize = (textAnn.fontSize + 2).clampedTo(fontSizeRange)
+                    textFontSize = textAnn.fontSize
+                    syncAnnotationLayers()
+                    needsDisplay = true
+                } else {
+                    textFontSize = (textFontSize + 2).clampedTo(fontSizeRange)
+                    needsDisplay = true
+                }
             }
         default:
             break
@@ -774,10 +817,24 @@ class SelectionView: NSView {
                 annotation.text = String(annotation.text.dropLast())
             }
             updateEditingTextLayer()
-        case 33: // [ - decrease font size
-            adjustFontSize(by: -2, for: annotation)
-        case 30: // ] - increase font size
-            adjustFontSize(by: 2, for: annotation)
+        case 33: // [ or { (Shift+[)
+            if event.modifierFlags.contains(.shift) {
+                annotation.backgroundPadding = max(0, annotation.backgroundPadding - 2)
+                textBackgroundPadding = annotation.backgroundPadding
+                updateEditingTextLayer()
+                needsDisplay = true
+            } else {
+                adjustFontSize(by: -2, for: annotation)
+            }
+        case 30: // ] or } (Shift+])
+            if event.modifierFlags.contains(.shift) {
+                annotation.backgroundPadding = min(40, annotation.backgroundPadding + 2)
+                textBackgroundPadding = annotation.backgroundPadding
+                updateEditingTextLayer()
+                needsDisplay = true
+            } else {
+                adjustFontSize(by: 2, for: annotation)
+            }
         default:
             // Append typed characters
             if let chars = event.characters, !chars.isEmpty {
@@ -830,10 +887,11 @@ class SelectionView: NSView {
         let displayText = annotation.text + "|"
         let attrs = annotation.textAttributes()
         textLayer.string = NSAttributedString(string: displayText, attributes: attrs)
+        let padding = textLayerPadding(for: annotation)
         let size = (displayText as NSString).size(withAttributes: attrs)
-        textLayer.bounds = CGRect(x: 0, y: 0, width: size.width + 4, height: size.height + 4)
-        textLayer.position = CGPoint(x: annotation.position.x + size.width / 2 + 2,
-                                     y: annotation.position.y + size.height / 2 + 2)
+        textLayer.bounds = CGRect(x: 0, y: 0, width: size.width + padding, height: size.height + padding)
+        textLayer.position = CGPoint(x: annotation.position.x + size.width / 2 + padding / 2,
+                                     y: annotation.position.y + size.height / 2 + padding / 2)
         layer?.addSublayer(textLayer)
         editingTextLayer = textLayer
 
@@ -870,6 +928,16 @@ class SelectionView: NSView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
 
+        // Update background
+        if let bgColor = annotation.backgroundColor {
+            textLayer.backgroundColor = bgColor
+            textLayer.cornerRadius = 3
+        } else {
+            textLayer.backgroundColor = nil
+            textLayer.cornerRadius = 0
+        }
+
+        let padding = textLayerPadding(for: annotation)
         let displayText = annotation.text.isEmpty ? "|" : annotation.text + "|"
         let attrs = annotation.textAttributes()
 
@@ -888,9 +956,9 @@ class SelectionView: NSView {
         }
 
         let size = (displayText as NSString).size(withAttributes: attrs)
-        textLayer.bounds = CGRect(x: 0, y: 0, width: size.width + 4, height: size.height + 4)
-        textLayer.position = CGPoint(x: annotation.position.x + size.width / 2 + 2,
-                                     y: annotation.position.y + size.height / 2 + 2)
+        textLayer.bounds = CGRect(x: 0, y: 0, width: size.width + padding, height: size.height + padding)
+        textLayer.position = CGPoint(x: annotation.position.x + size.width / 2 + padding / 2,
+                                     y: annotation.position.y + size.height / 2 + padding / 2)
 
         CATransaction.commit()
     }
@@ -900,7 +968,15 @@ class SelectionView: NSView {
         textLayer.alignmentMode = .left
         textLayer.contentsScale = window?.screen?.backingScaleFactor ?? 2.0
         textLayer.isWrapped = false
-        textLayer.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull(), "string": NSNull()]
+        textLayer.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull(), "string": NSNull(),
+                             "backgroundColor": NSNull(), "cornerRadius": NSNull()]
+
+        if let bgColor = annotation.backgroundColor {
+            textLayer.backgroundColor = bgColor
+            textLayer.cornerRadius = 3
+        }
+
+        let padding = textLayerPadding(for: annotation)
 
         // Use attributed string for reliable rendering
         let displayText = "|"
@@ -908,9 +984,9 @@ class SelectionView: NSView {
         textLayer.string = NSAttributedString(string: displayText, attributes: attrs)
 
         let size = (displayText as NSString).size(withAttributes: attrs)
-        textLayer.bounds = CGRect(x: 0, y: 0, width: size.width + 4, height: size.height + 4)
-        textLayer.position = CGPoint(x: annotation.position.x + size.width / 2 + 2,
-                                     y: annotation.position.y + size.height / 2 + 2)
+        textLayer.bounds = CGRect(x: 0, y: 0, width: size.width + padding, height: size.height + padding)
+        textLayer.position = CGPoint(x: annotation.position.x + size.width / 2 + padding / 2,
+                                     y: annotation.position.y + size.height / 2 + padding / 2)
 
         return textLayer
     }
@@ -920,7 +996,7 @@ class SelectionView: NSView {
     enum AnnotationSnapshot {
         case arrow(id: UUID, startPoint: CGPoint, endPoint: CGPoint, color: CGColor, strokeWidth: CGFloat)
         case rectangle(id: UUID, bounds: CGRect, color: CGColor, strokeWidth: CGFloat)
-        case text(id: UUID, text: String, position: CGPoint, fontSize: CGFloat, color: CGColor)
+        case text(id: UUID, text: String, position: CGPoint, fontSize: CGFloat, color: CGColor, backgroundColor: CGColor?, backgroundPadding: CGFloat)
     }
 
     private func snapshotAnnotations() -> [AnnotationSnapshot] {
@@ -932,7 +1008,8 @@ class SelectionView: NSView {
                 return .rectangle(id: rect.id, bounds: rect.bounds, color: rect.color, strokeWidth: rect.strokeWidth)
             } else if let text = annotation as? TextAnnotation {
                 return .text(id: text.id, text: text.text, position: text.position,
-                             fontSize: text.fontSize, color: text.color)
+                             fontSize: text.fontSize, color: text.color, backgroundColor: text.backgroundColor,
+                             backgroundPadding: text.backgroundPadding)
             }
             // Unknown annotation type — skip rather than crash
             return .rectangle(id: UUID(), bounds: .zero, color: CGColor(red: 0, green: 0, blue: 0, alpha: 0), strokeWidth: 0)
@@ -947,8 +1024,8 @@ class SelectionView: NSView {
                                        color: color, strokeWidth: strokeWidth)
             case .rectangle(let id, let bounds, let color, let strokeWidth):
                 return RectangleAnnotation(id: id, bounds: bounds, color: color, strokeWidth: strokeWidth)
-            case .text(let id, let text, let position, let fontSize, let color):
-                return TextAnnotation(id: id, text: text, position: position, fontSize: fontSize, color: color)
+            case .text(let id, let text, let position, let fontSize, let color, let backgroundColor, let backgroundPadding):
+                return TextAnnotation(id: id, text: text, position: position, fontSize: fontSize, color: color, backgroundColor: backgroundColor, backgroundPadding: backgroundPadding)
             }
         }
 
@@ -1030,6 +1107,9 @@ class SelectionView: NSView {
                         dragStartArrowStart = arrow.startPoint
                         dragStartArrowEnd = arrow.endPoint
                     }
+                    if let textAnn = annotation as? TextAnnotation {
+                        dragStartFontSize = textAnn.fontSize
+                    }
 
                     cursorForHandle(handle, isDragging: true).set()
 
@@ -1066,6 +1146,9 @@ class SelectionView: NSView {
                     if let arrow = annotation as? ArrowAnnotation {
                         dragStartArrowStart = arrow.startPoint
                         dragStartArrowEnd = arrow.endPoint
+                    }
+                    if let textAnn = annotation as? TextAnnotation {
+                        dragStartFontSize = textAnn.fontSize
                     }
 
                     cursorForHandle(handle, isDragging: true).set()
@@ -1115,6 +1198,9 @@ class SelectionView: NSView {
                         dragStartArrowStart = arrow.startPoint
                         dragStartArrowEnd = arrow.endPoint
                     }
+                    if let textAnn = annotation as? TextAnnotation {
+                        dragStartFontSize = textAnn.fontSize
+                    }
 
                     cursorForHandle(handle, isDragging: true).set()
 
@@ -1131,7 +1217,7 @@ class SelectionView: NSView {
             selectedAnnotation = nil
             selectionHandleLayer?.removeFromSuperlayer()
             selectionHandleLayer = nil
-            let annotation = TextAnnotation(position: point, fontSize: textFontSize, color: annotationColor)
+            let annotation = TextAnnotation(position: point, fontSize: textFontSize, color: annotationColor, backgroundColor: effectiveBackgroundColor(), backgroundPadding: textBackgroundPadding)
             editingTextAnnotation = annotation
 
             let textLayer = createEditingTextLayer(for: annotation)
@@ -1174,6 +1260,64 @@ class SelectionView: NSView {
                 default:
                     break
                 }
+            } else if let textAnn = selected as? TextAnnotation, let originalBounds = dragStartBounds {
+                // Text annotations: resize = scale font size proportionally
+                switch activeHandle {
+                case .body:
+                    textAnn.position = CGPoint(
+                        x: originalBounds.origin.x + delta.x,
+                        y: originalBounds.origin.y + delta.y
+                    )
+                case .topRight:
+                    let newHeight = originalBounds.height + delta.y
+                    if newHeight > 0 && originalBounds.height > 0 {
+                        let scale = newHeight / originalBounds.height
+                        textAnn.fontSize = (dragStartFontSize * scale).clampedTo(fontSizeRange)
+                        textFontSize = textAnn.fontSize
+                    }
+                case .topLeft:
+                    let newHeight = originalBounds.height + delta.y
+                    if newHeight > 0 && originalBounds.height > 0 {
+                        let scale = newHeight / originalBounds.height
+                        textAnn.fontSize = (dragStartFontSize * scale).clampedTo(fontSizeRange)
+                        textFontSize = textAnn.fontSize
+                        // Anchor bottom-right corner
+                        let newSize = textAnn.textSize()
+                        textAnn.position = CGPoint(
+                            x: originalBounds.maxX - newSize.width,
+                            y: originalBounds.origin.y
+                        )
+                    }
+                case .bottomRight:
+                    let newHeight = originalBounds.height - delta.y
+                    if newHeight > 0 && originalBounds.height > 0 {
+                        let scale = newHeight / originalBounds.height
+                        textAnn.fontSize = (dragStartFontSize * scale).clampedTo(fontSizeRange)
+                        textFontSize = textAnn.fontSize
+                        // Anchor top-left corner, adjust Y for new height
+                        let newSize = textAnn.textSize()
+                        textAnn.position = CGPoint(
+                            x: originalBounds.origin.x,
+                            y: originalBounds.maxY - newSize.height
+                        )
+                    }
+                case .bottomLeft:
+                    let newHeight = originalBounds.height - delta.y
+                    if newHeight > 0 && originalBounds.height > 0 {
+                        let scale = newHeight / originalBounds.height
+                        textAnn.fontSize = (dragStartFontSize * scale).clampedTo(fontSizeRange)
+                        textFontSize = textAnn.fontSize
+                        // Anchor top-right corner
+                        let newSize = textAnn.textSize()
+                        textAnn.position = CGPoint(
+                            x: originalBounds.maxX - newSize.width,
+                            y: originalBounds.maxY - newSize.height
+                        )
+                    }
+                default:
+                    break
+                }
+                needsDisplay = true
             } else if let originalBounds = dragStartBounds {
                 switch activeHandle {
                 case .body:
@@ -1394,11 +1538,16 @@ class SelectionView: NSView {
     private let colorDividerGap: CGFloat = 8
     private var isColorPopoverVisible = false
 
+    private var isTextModeActive: Bool {
+        currentMode == .text || editingTextAnnotation != nil
+    }
+
     private func toolbarRect() -> NSRect {
         let count = CGFloat(toolbarButtons.count)
         let buttonsWidth = count * toolbarButtonSize + (count - 1) * toolbarSpacing
-        // One color button after divider
-        let totalWidth = buttonsWidth + colorDividerGap + toolbarButtonSize + toolbarPadding * 2
+        // One color button after divider, plus bg color button in text mode
+        let colorButtonsWidth = isTextModeActive ? (toolbarButtonSize * 2 + toolbarSpacing) : toolbarButtonSize
+        let totalWidth = buttonsWidth + colorDividerGap + colorButtonsWidth + toolbarPadding * 2
         let totalHeight = toolbarButtonSize + toolbarPadding * 2
         return NSRect(
             x: bounds.midX - totalWidth / 2,
@@ -1423,6 +1572,11 @@ class SelectionView: NSView {
         return NSRect(x: x, y: y, width: toolbarButtonSize, height: toolbarButtonSize)
     }
 
+    private func bgColorButtonRect() -> NSRect {
+        let fgBtn = colorButtonRect()
+        return NSRect(x: fgBtn.maxX + toolbarSpacing, y: fgBtn.minY, width: toolbarButtonSize, height: toolbarButtonSize)
+    }
+
     // Color popover layout
     private let popoverSwatchSize: CGFloat = 22
     private let popoverSwatchSpacing: CGFloat = 6
@@ -1430,20 +1584,25 @@ class SelectionView: NSView {
     private let popoverColumns = 6
 
     private func colorPopoverRect() -> NSRect {
-        let btnRect = colorButtonRect()
-        let rows = ceil(CGFloat(colorPalette.count) / CGFloat(popoverColumns))
+        let btnRect = activeColorTarget == .background ? bgColorButtonRect() : colorButtonRect()
+        // For background target, add 1 extra swatch to count for "No Fill"
+        let swatchCount = activeColorTarget == .background ? colorPalette.count + 1 : colorPalette.count
+        let rows = ceil(CGFloat(swatchCount) / CGFloat(popoverColumns))
         let gridWidth = CGFloat(popoverColumns) * popoverSwatchSize + CGFloat(popoverColumns - 1) * popoverSwatchSpacing
         let gridHeight = rows * popoverSwatchSize + (rows - 1) * popoverSwatchSpacing
         let customRowHeight: CGFloat = 28
+        let opacityRowHeight: CGFloat = activeColorTarget == .background ? 28 + popoverSwatchSpacing : 0
         let totalWidth = gridWidth + popoverPadding * 2
-        let totalHeight = gridHeight + popoverPadding * 2 + popoverSwatchSpacing + customRowHeight
-        // Right-align to color button, position just below toolbar
+        let totalHeight = gridHeight + popoverPadding * 2 + popoverSwatchSpacing + customRowHeight + opacityRowHeight
+        // Right-align to button, position just below toolbar
         let x = btnRect.maxX - totalWidth
         let toolbar = toolbarRect()
         let y = toolbar.minY - totalHeight - 4
         return NSRect(x: x, y: y, width: totalWidth, height: totalHeight)
     }
 
+    /// Returns the rect for a swatch at a given visual index.
+    /// For background mode, index 0 is the "No Fill" swatch, and palette colors start at index 1.
     private func popoverSwatchRect(at index: Int) -> NSRect {
         let popover = colorPopoverRect()
         let col = index % popoverColumns
@@ -1463,6 +1622,23 @@ class SelectionView: NSView {
             width: popover.width - popoverPadding * 2,
             height: 24
         )
+    }
+
+    private func popoverOpacityRowRect() -> NSRect {
+        let customBtn = popoverCustomButtonRect()
+        return NSRect(
+            x: customBtn.minX,
+            y: customBtn.maxY + popoverSwatchSpacing,
+            width: customBtn.width,
+            height: 24
+        )
+    }
+
+    private func popoverOpacityButtonRect(at index: Int) -> NSRect {
+        let row = popoverOpacityRowRect()
+        let btnWidth = (row.width - 3 * popoverSwatchSpacing) / 4
+        let x = row.minX + CGFloat(index) * (btnWidth + popoverSwatchSpacing)
+        return NSRect(x: x, y: row.minY, width: btnWidth, height: row.height)
     }
 
     private func applyColor(_ color: CGColor) {
@@ -1493,30 +1669,122 @@ class SelectionView: NSView {
         needsDisplay = true
     }
 
+    private func applyBackgroundColor(_ color: CGColor?) {
+        textBackgroundColor = color
+        // Persist
+        if let color = color {
+            let rgbSpace = CGColorSpaceCreateDeviceRGB()
+            if let components = color.components, color.numberOfComponents == 4 {
+                AppSettings.shared.textBackgroundColorRGBA = components
+            } else if let converted = color.converted(to: rgbSpace, intent: .defaultIntent, options: nil),
+                      let components = converted.components, converted.numberOfComponents == 4 {
+                AppSettings.shared.textBackgroundColorRGBA = components
+            }
+        } else {
+            AppSettings.shared.textBackgroundColorRGBA = nil
+        }
+        if let selected = selectedAnnotation as? TextAnnotation {
+            pushUndoState()
+            selected.backgroundColor = effectiveBackgroundColor()
+            syncAnnotationLayers()
+        }
+        if let editing = editingTextAnnotation {
+            editing.backgroundColor = effectiveBackgroundColor()
+            updateEditingTextLayer()
+        }
+        needsDisplay = true
+    }
+
+    private func effectiveBackgroundColor() -> CGColor? {
+        guard let base = textBackgroundColor else { return nil }
+        let rgbSpace = CGColorSpaceCreateDeviceRGB()
+        guard let converted = base.converted(to: rgbSpace, intent: .defaultIntent, options: nil),
+              let comps = converted.components, comps.count == 4 else { return base }
+        return CGColor(red: comps[0], green: comps[1], blue: comps[2], alpha: comps[3] * textBackgroundOpacity)
+    }
+
+    private func drawNoFillIndicator(in rect: NSRect) {
+        // Gray circle
+        NSColor.gray.withAlphaComponent(0.4).setFill()
+        NSBezierPath(ovalIn: rect.insetBy(dx: 2, dy: 2)).fill()
+        // Red diagonal slash
+        NSColor.red.setStroke()
+        let slash = NSBezierPath()
+        slash.lineWidth = 2
+        slash.move(to: NSPoint(x: rect.minX + 4, y: rect.maxY - 4))
+        slash.line(to: NSPoint(x: rect.maxX - 4, y: rect.minY + 4))
+        slash.stroke()
+    }
+
     @objc private func colorPanelColorChanged(_ sender: NSColorPanel) {
-        applyColor(sender.color.cgColor)
+        if activeColorTarget == .background {
+            applyBackgroundColor(sender.color.cgColor)
+        } else {
+            applyColor(sender.color.cgColor)
+        }
     }
 
     private func openSystemColorPicker() {
         let panel = NSColorPanel.shared
         panel.setTarget(self)
         panel.setAction(#selector(colorPanelColorChanged(_:)))
-        panel.color = NSColor(cgColor: annotationColor) ?? .red
+        if activeColorTarget == .background {
+            panel.color = textBackgroundColor.flatMap { NSColor(cgColor: $0) } ?? .gray
+        } else {
+            panel.color = NSColor(cgColor: annotationColor) ?? .red
+        }
         panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.screenSaverWindow)) + 1)
         panel.orderFront(nil)
     }
+
+    private let opacityPresets: [CGFloat] = [0.25, 0.5, 0.75, 1.0]
 
     private func handleToolbarClick(at point: NSPoint) -> Bool {
         // If popover is open, handle clicks inside it first
         if isColorPopoverVisible {
             let popover = colorPopoverRect()
             if popover.contains(point) {
-                // Check swatch clicks
-                for (index, color) in colorPalette.enumerated() {
-                    if popoverSwatchRect(at: index).contains(point) {
-                        applyColor(color.cgColor)
+                if activeColorTarget == .background {
+                    // Background popover: index 0 = No Fill, then palette colors
+                    if popoverSwatchRect(at: 0).contains(point) {
+                        applyBackgroundColor(nil)
                         isColorPopoverVisible = false
                         return true
+                    }
+                    for (index, color) in colorPalette.enumerated() {
+                        if popoverSwatchRect(at: index + 1).contains(point) {
+                            applyBackgroundColor(color.cgColor)
+                            isColorPopoverVisible = false
+                            return true
+                        }
+                    }
+                    // Check opacity buttons
+                    for (index, opacity) in opacityPresets.enumerated() {
+                        if popoverOpacityButtonRect(at: index).contains(point) {
+                            textBackgroundOpacity = opacity
+                            AppSettings.shared.textBackgroundOpacity = opacity
+                            // Re-apply to update effective color
+                            if let selected = selectedAnnotation as? TextAnnotation {
+                                pushUndoState()
+                                selected.backgroundColor = effectiveBackgroundColor()
+                                syncAnnotationLayers()
+                            }
+                            if let editing = editingTextAnnotation {
+                                editing.backgroundColor = effectiveBackgroundColor()
+                                updateEditingTextLayer()
+                            }
+                            needsDisplay = true
+                            return true
+                        }
+                    }
+                } else {
+                    // Foreground popover: standard palette
+                    for (index, color) in colorPalette.enumerated() {
+                        if popoverSwatchRect(at: index).contains(point) {
+                            applyColor(color.cgColor)
+                            isColorPopoverVisible = false
+                            return true
+                        }
                     }
                 }
                 // Check custom button
@@ -1543,8 +1811,17 @@ class SelectionView: NSView {
             }
         }
 
-        // Color button toggles popover
+        // Foreground color button toggles popover
         if colorButtonRect().contains(point) {
+            activeColorTarget = .foreground
+            isColorPopoverVisible = !isColorPopoverVisible
+            needsDisplay = true
+            return true
+        }
+
+        // Background color button (text mode only)
+        if isTextModeActive && bgColorButtonRect().contains(point) {
+            activeColorTarget = .background
             isColorPopoverVisible = !isColorPopoverVisible
             needsDisplay = true
             return true
@@ -1602,7 +1879,7 @@ class SelectionView: NSView {
             button.shortcut.draw(at: shortcutPoint, withAttributes: shortcutAttrs)
         }
 
-        // Draw color button (filled circle showing current color)
+        // Draw foreground color button (filled circle showing current color)
         let colorBtn = colorButtonRect()
         let circleInset: CGFloat = 8
         let circleRect = colorBtn.insetBy(dx: circleInset, dy: circleInset)
@@ -1615,14 +1892,39 @@ class SelectionView: NSView {
         (NSColor(cgColor: annotationColor) ?? .red).setFill()
         NSBezierPath(ovalIn: circleRect).fill()
 
-        // Border on circle
-        NSColor.white.withAlphaComponent(0.4).setStroke()
-        let circleBorder = NSBezierPath(ovalIn: circleRect)
-        circleBorder.lineWidth = 1.5
-        circleBorder.stroke()
+        // White border on fg circle (thick in text mode to distinguish from bg)
+        NSColor.white.setStroke()
+        let fgBorder = NSBezierPath(ovalIn: circleRect)
+        fgBorder.lineWidth = isTextModeActive ? 2.5 : 1.5
+        fgBorder.stroke()
+
+        // Draw background color button in text mode
+        if isTextModeActive {
+            let bgBtn = bgColorButtonRect()
+            let bgCircleRect = bgBtn.insetBy(dx: circleInset, dy: circleInset)
+
+            // Button background
+            NSColor.white.withAlphaComponent(0.05).setFill()
+            NSBezierPath(roundedRect: bgBtn, xRadius: 8, yRadius: 8).fill()
+
+            if let bgColor = effectiveBackgroundColor() {
+                // Filled circle with background color
+                (NSColor(cgColor: bgColor) ?? .gray).setFill()
+                NSBezierPath(ovalIn: bgCircleRect).fill()
+            } else {
+                // "No fill" indicator
+                drawNoFillIndicator(in: bgCircleRect)
+            }
+
+            // Thin border on bg circle
+            NSColor.white.withAlphaComponent(0.4).setStroke()
+            let bgBorder = NSBezierPath(ovalIn: bgCircleRect)
+            bgBorder.lineWidth = 1.0
+            bgBorder.stroke()
+        }
 
         // Draw font size indicator when in text mode
-        if currentMode == .text || editingTextAnnotation != nil {
+        if isTextModeActive {
             drawFontSizeIndicator(below: toolbar)
         }
 
@@ -1674,26 +1976,75 @@ class SelectionView: NSView {
         borderPath.lineWidth = 0.5
         borderPath.stroke()
 
-        // Draw swatches
-        for (index, color) in colorPalette.enumerated() {
-            let swatchRect = popoverSwatchRect(at: index)
-            let isActive = colorsMatch(color.cgColor, annotationColor)
-
-            // Selection indicator
-            if isActive {
+        if activeColorTarget == .background {
+            // "No Fill" swatch at index 0
+            let noFillRect = popoverSwatchRect(at: 0)
+            let isNoFillActive = textBackgroundColor == nil
+            if isNoFillActive {
                 NSColor.white.setFill()
-                NSBezierPath(roundedRect: swatchRect.insetBy(dx: -2, dy: -2), xRadius: 5, yRadius: 5).fill()
+                NSBezierPath(roundedRect: noFillRect.insetBy(dx: -2, dy: -2), xRadius: 5, yRadius: 5).fill()
+            }
+            drawNoFillIndicator(in: noFillRect)
+            NSColor.white.withAlphaComponent(0.15).setStroke()
+            let nfBorder = NSBezierPath(roundedRect: noFillRect, xRadius: 4, yRadius: 4)
+            nfBorder.lineWidth = 0.5
+            nfBorder.stroke()
+
+            // Palette colors starting at index 1
+            for (index, color) in colorPalette.enumerated() {
+                let swatchRect = popoverSwatchRect(at: index + 1)
+                let isActive = textBackgroundColor != nil && colorsMatch(color.cgColor, textBackgroundColor!)
+
+                if isActive {
+                    NSColor.white.setFill()
+                    NSBezierPath(roundedRect: swatchRect.insetBy(dx: -2, dy: -2), xRadius: 5, yRadius: 5).fill()
+                }
+                color.setFill()
+                NSBezierPath(roundedRect: swatchRect, xRadius: 4, yRadius: 4).fill()
+                NSColor.white.withAlphaComponent(0.15).setStroke()
+                let sBorder = NSBezierPath(roundedRect: swatchRect, xRadius: 4, yRadius: 4)
+                sBorder.lineWidth = 0.5
+                sBorder.stroke()
             }
 
-            // Filled rounded square
-            color.setFill()
-            NSBezierPath(roundedRect: swatchRect, xRadius: 4, yRadius: 4).fill()
+            // Opacity presets row
+            let opacityAttrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.monospacedSystemFont(ofSize: 10, weight: .medium),
+                .foregroundColor: NSColor.white.withAlphaComponent(0.7)
+            ]
+            for (index, opacity) in opacityPresets.enumerated() {
+                let btnRect = popoverOpacityButtonRect(at: index)
+                let isActive = abs(textBackgroundOpacity - opacity) < 0.01
+                if isActive {
+                    NSColor.white.withAlphaComponent(0.2).setFill()
+                } else {
+                    NSColor.white.withAlphaComponent(0.06).setFill()
+                }
+                NSBezierPath(roundedRect: btnRect, xRadius: 4, yRadius: 4).fill()
+                let label = "\(Int(opacity * 100))%"
+                let labelSize = label.size(withAttributes: opacityAttrs)
+                label.draw(
+                    at: NSPoint(x: btnRect.midX - labelSize.width / 2, y: btnRect.minY + (btnRect.height - labelSize.height) / 2),
+                    withAttributes: opacityAttrs
+                )
+            }
+        } else {
+            // Standard foreground color swatches
+            for (index, color) in colorPalette.enumerated() {
+                let swatchRect = popoverSwatchRect(at: index)
+                let isActive = colorsMatch(color.cgColor, annotationColor)
 
-            // Subtle border
-            NSColor.white.withAlphaComponent(0.15).setStroke()
-            let sBorder = NSBezierPath(roundedRect: swatchRect, xRadius: 4, yRadius: 4)
-            sBorder.lineWidth = 0.5
-            sBorder.stroke()
+                if isActive {
+                    NSColor.white.setFill()
+                    NSBezierPath(roundedRect: swatchRect.insetBy(dx: -2, dy: -2), xRadius: 5, yRadius: 5).fill()
+                }
+                color.setFill()
+                NSBezierPath(roundedRect: swatchRect, xRadius: 4, yRadius: 4).fill()
+                NSColor.white.withAlphaComponent(0.15).setStroke()
+                let sBorder = NSBezierPath(roundedRect: swatchRect, xRadius: 4, yRadius: 4)
+                sBorder.lineWidth = 0.5
+                sBorder.stroke()
+            }
         }
 
         // "Custom..." button
@@ -1814,6 +2165,10 @@ class SelectionView: NSView {
         return shapeLayer
     }
 
+    private func textLayerPadding(for annotation: TextAnnotation) -> CGFloat {
+        return annotation.backgroundColor != nil ? annotation.backgroundPadding + 4 : 4
+    }
+
     private func createTextAnnotationLayer(for annotation: TextAnnotation) -> CATextLayer {
         let textLayer = CATextLayer()
         textLayer.fontSize = annotation.fontSize
@@ -1822,14 +2177,21 @@ class SelectionView: NSView {
         textLayer.alignmentMode = .left
         textLayer.contentsScale = window?.screen?.backingScaleFactor ?? 2.0
         textLayer.isWrapped = false
-        textLayer.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull(), "string": NSNull()]
+        textLayer.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull(), "string": NSNull(),
+                             "backgroundColor": NSNull(), "cornerRadius": NSNull()]
 
+        if let bgColor = annotation.backgroundColor {
+            textLayer.backgroundColor = bgColor
+            textLayer.cornerRadius = 3
+        }
+
+        let padding = textLayerPadding(for: annotation)
         textLayer.string = annotation.text
         let attrs = annotation.textAttributes()
         let size = (annotation.text as NSString).size(withAttributes: attrs)
-        textLayer.bounds = CGRect(x: 0, y: 0, width: size.width + 4, height: size.height + 4)
-        textLayer.position = CGPoint(x: annotation.position.x + size.width / 2 + 2,
-                                     y: annotation.position.y + size.height / 2 + 2)
+        textLayer.bounds = CGRect(x: 0, y: 0, width: size.width + padding, height: size.height + padding)
+        textLayer.position = CGPoint(x: annotation.position.x + size.width / 2 + padding / 2,
+                                     y: annotation.position.y + size.height / 2 + padding / 2)
 
         return textLayer
     }
@@ -1837,11 +2199,22 @@ class SelectionView: NSView {
     private func updateLayerPath(_ layerToUpdate: CALayer, for annotation: any Annotation) {
         if let textAnnotation = annotation as? TextAnnotation, let textLayer = layerToUpdate as? CATextLayer {
             textLayer.string = textAnnotation.text
+            textLayer.fontSize = textAnnotation.fontSize
+            textLayer.font = NSFont.systemFont(ofSize: textAnnotation.fontSize, weight: .bold)
+            textLayer.foregroundColor = textAnnotation.color
+            if let bgColor = textAnnotation.backgroundColor {
+                textLayer.backgroundColor = bgColor
+                textLayer.cornerRadius = 3
+            } else {
+                textLayer.backgroundColor = nil
+                textLayer.cornerRadius = 0
+            }
+            let padding = textLayerPadding(for: textAnnotation)
             let attrs = textAnnotation.textAttributes()
             let size = (textAnnotation.text as NSString).size(withAttributes: attrs)
-            textLayer.bounds = CGRect(x: 0, y: 0, width: size.width + 4, height: size.height + 4)
-            textLayer.position = CGPoint(x: textAnnotation.position.x + size.width / 2 + 2,
-                                         y: textAnnotation.position.y + size.height / 2 + 2)
+            textLayer.bounds = CGRect(x: 0, y: 0, width: size.width + padding, height: size.height + padding)
+            textLayer.position = CGPoint(x: textAnnotation.position.x + size.width / 2 + padding / 2,
+                                         y: textAnnotation.position.y + size.height / 2 + padding / 2)
             return
         }
 

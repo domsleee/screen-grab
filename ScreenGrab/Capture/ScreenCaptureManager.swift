@@ -189,6 +189,21 @@ class ScreenCaptureManager {
                         x: textAnnotation.position.x - selectionRect.origin.x,
                         y: textAnnotation.position.y - selectionRect.origin.y
                     )
+                    // Draw background rect if set
+                    if let bgColor = textAnnotation.backgroundColor {
+                        let textSize = textAnnotation.textSize()
+                        let padding = textAnnotation.backgroundPadding
+                        let bgRect = CGRect(
+                            x: translatedPosition.x - padding,
+                            y: translatedPosition.y - padding,
+                            width: textSize.width + padding * 2,
+                            height: textSize.height + padding * 2
+                        )
+                        context.setFillColor(bgColor)
+                        let bgPath = CGPath(roundedRect: bgRect, cornerWidth: 3, cornerHeight: 3, transform: nil)
+                        context.addPath(bgPath)
+                        context.fillPath()
+                    }
                     let attrs = textAnnotation.textAttributes()
                     (textAnnotation.text as NSString).draw(
                         at: translatedPosition,

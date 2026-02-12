@@ -158,7 +158,6 @@ class SelectionView: NSView {
     private var coordLayer: CATextLayer?
     private var coordBgLayer: CALayer?
     private var crosshairCursor: NSCursor?
-    private var coordTimer: Timer?
 
     // Custom diagonal resize cursors (macOS has no native ones)
     private lazy var nwseResizeCursor: NSCursor = {
@@ -266,26 +265,6 @@ class SelectionView: NSView {
         setupCoordLayer()
     }
 
-    private func setupDisplayLink() {
-        // Poll mouse position at 120Hz for smooth coordinate updates and hover detection
-        coordTimer = Timer(timeInterval: 1.0/120.0, repeats: true) { [weak self] _ in
-            guard let self = self, let window = self.window else { return }
-            let screenPos = NSEvent.mouseLocation
-            let windowPos = window.convertPoint(fromScreen: screenPos)
-            let viewPos = self.convert(windowPos, from: nil)
-            self.currentMousePosition = viewPos
-            self.updateHoverState(at: viewPos)
-            self.updateCoordDisplay(at: viewPos)
-        }
-        if let timer = coordTimer {
-            RunLoop.main.add(timer, forMode: .common)
-        }
-    }
-
-    private func stopDisplayLink() {
-        coordTimer?.invalidate()
-        coordTimer = nil
-    }
 
     private func setupCoordLayer() {
         // Coords are now baked into cursor image - no separate layer needed
@@ -306,10 +285,9 @@ class SelectionView: NSView {
         buildCrosshairCursor(at: NSPoint(x: 0, y: 0))
     }
 
-    // Cache font and character metrics to avoid CoreText crashes from timer callbacks.
-    // sizeWithAttributes can crash when called from timer callbacks due to CoreText
-    // internal state issues (nil font in dictionary). Since the font is monospaced,
-    // we compute text sizes arithmetically from cached metrics.
+    // Cache font and character metrics for crosshair cursor rendering.
+    // Since the font is monospaced, we compute text sizes arithmetically
+    // from cached metrics for efficiency.
     private static let crosshairFont: NSFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .medium)
     private static let crosshairCharSize: NSSize = {
         let font = crosshairFont
@@ -594,9 +572,8 @@ class SelectionView: NSView {
     }
 
     override func resetCursorRects() {
-        // Don't add cursor rects — we manage all cursors via the 120Hz timer
-        // and mouse event handlers. System cursor rects fight with our dynamic
-        // cursor logic and cause flicker.
+        // Don't add cursor rects — we manage all cursors via mouse event handlers.
+        // System cursor rects fight with our dynamic cursor logic and cause flicker.
     }
 
     override func cursorUpdate(with event: NSEvent) {
@@ -645,7 +622,6 @@ class SelectionView: NSView {
             return nil
         }
         window?.invalidateCursorRects(for: self)
-        setupDisplayLink()
     }
 
     func setCrosshairCursor() {
@@ -661,7 +637,6 @@ class SelectionView: NSView {
     }
 
     func stopMonitors() {
-        stopDisplayLink()
         if let monitor = keyMonitor {
             NSEvent.removeMonitor(monitor)
             keyMonitor = nil
@@ -1450,12 +1425,10 @@ class SelectionView: NSView {
     }
 
     override func mouseMoved(with event: NSEvent) {
-        currentMousePosition = convert(event.locationInWindow, from: nil)
-        // Hover detection and coord display handled by 120Hz timer
-        // Don't override cursor when it's managed by hover/handle state
-        if currentMode != .select && hoveredAnnotation == nil && !isHoveringSelectedHandle {
-            crosshairCursor?.set()
-        }
+        let viewPos = convert(event.locationInWindow, from: nil)
+        currentMousePosition = viewPos
+        updateHoverState(at: viewPos)
+        updateCoordDisplay(at: viewPos)
     }
 
     // MARK: - Drawing

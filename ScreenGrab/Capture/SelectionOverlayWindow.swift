@@ -2373,14 +2373,15 @@ class SelectionView: NSView {
                        withAttributes: noFillAttrs)
 
         // Opacity presets: 25 50 75 100
-        let opacityBtnWidth: CGFloat = 28
         let opacityStartX = noFillRect.maxX + 4
+        let opacityGap: CGFloat = 2
+        let opacityBtnWidth = (popover.maxX - p - opacityStartX - CGFloat(opacityPresets.count - 1) * opacityGap) / CGFloat(opacityPresets.count)
         let opAttrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedSystemFont(ofSize: 9, weight: .medium),
             .foregroundColor: NSColor.white.withAlphaComponent(0.7)
         ]
         for (i, opacity) in opacityPresets.enumerated() {
-            let btnRect = NSRect(x: opacityStartX + CGFloat(i) * (opacityBtnWidth + 2),
+            let btnRect = NSRect(x: opacityStartX + CGFloat(i) * (opacityBtnWidth + opacityGap),
                                  y: curY, width: opacityBtnWidth, height: bgRowHeight)
             let isActive = textBackgroundColor != nil && abs(textBackgroundOpacity - opacity) < 0.01
             if isActive {
@@ -2544,10 +2545,11 @@ class SelectionView: NSView {
         }
 
         // Opacity presets
-        let opacityBtnWidth: CGFloat = 28
         let opacityStartX = noFillRect.maxX + 4
+        let opacityGap: CGFloat = 2
+        let opacityBtnWidth = (popover.maxX - p - opacityStartX - CGFloat(opacityPresets.count - 1) * opacityGap) / CGFloat(opacityPresets.count)
         for (i, opacity) in opacityPresets.enumerated() {
-            let btnRect = NSRect(x: opacityStartX + CGFloat(i) * (opacityBtnWidth + 2),
+            let btnRect = NSRect(x: opacityStartX + CGFloat(i) * (opacityBtnWidth + opacityGap),
                                  y: curY, width: opacityBtnWidth, height: bgRowHeight)
             if btnRect.contains(point) {
                 // If no bg color, set a default dark gray

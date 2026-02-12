@@ -1673,7 +1673,7 @@ class SelectionView: NSView {
         let rgbSpace = CGColorSpaceCreateDeviceRGB()
         guard let converted = base.converted(to: rgbSpace, intent: .defaultIntent, options: nil),
               let comps = converted.components, comps.count == 4 else { return base }
-        return CGColor(red: comps[0], green: comps[1], blue: comps[2], alpha: comps[3] * textBackgroundOpacity)
+        return CGColor(red: comps[0], green: comps[1], blue: comps[2], alpha: textBackgroundOpacity)
     }
 
     private func drawNoFillIndicator(in rect: NSRect) {

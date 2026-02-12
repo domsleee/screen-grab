@@ -20,19 +20,29 @@ class ArrowAnnotation: Annotation {
             return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
         }
         set {
-            // Adjust points when bounds change
             let oldBounds = bounds
-            let scaleX = newValue.width / max(oldBounds.width, 1)
-            let scaleY = newValue.height / max(oldBounds.height, 1)
 
-            startPoint = CGPoint(
-                x: newValue.minX + (startPoint.x - oldBounds.minX) * scaleX,
-                y: newValue.minY + (startPoint.y - oldBounds.minY) * scaleY
-            )
-            endPoint = CGPoint(
-                x: newValue.minX + (endPoint.x - oldBounds.minX) * scaleX,
-                y: newValue.minY + (endPoint.y - oldBounds.minY) * scaleY
-            )
+            // Map each axis: scale proportionally when old dimension > 0,
+            // otherwise distribute points across the new dimension.
+            func mapPair(_ a: CGFloat, _ b: CGFloat,
+                         oldMin: CGFloat, oldSize: CGFloat,
+                         newMin: CGFloat, newSize: CGFloat) -> (CGFloat, CGFloat) {
+                if oldSize < 0.001 {
+                    return (newMin, newMin + newSize)
+                }
+                let scale = newSize / oldSize
+                return (newMin + (a - oldMin) * scale,
+                        newMin + (b - oldMin) * scale)
+            }
+
+            let (sx, ex) = mapPair(startPoint.x, endPoint.x,
+                                   oldMin: oldBounds.minX, oldSize: oldBounds.width,
+                                   newMin: newValue.minX, newSize: newValue.width)
+            let (sy, ey) = mapPair(startPoint.y, endPoint.y,
+                                   oldMin: oldBounds.minY, oldSize: oldBounds.height,
+                                   newMin: newValue.minY, newSize: newValue.height)
+            startPoint = CGPoint(x: sx, y: sy)
+            endPoint = CGPoint(x: ex, y: ey)
         }
     }
 
@@ -93,23 +103,34 @@ class ArrowAnnotation: Annotation {
     }
 
     func hitTest(point: CGPoint) -> AnnotationHandle? {
-        let handleSize: CGFloat = 12
+        let handleRadius: CGFloat = 5
 
-        // Check endpoints
-        let startRect = CGRect(
-            x: startPoint.x - handleSize/2, y: startPoint.y - handleSize/2,
-            width: handleSize, height: handleSize
-        )
-        if startRect.contains(point) {
-            return .startPoint
+        let distToStart = hypot(point.x - startPoint.x, point.y - startPoint.y)
+        let distToEnd = hypot(point.x - endPoint.x, point.y - endPoint.y)
+        let arrowLength = hypot(endPoint.x - startPoint.x, endPoint.y - startPoint.y)
+
+        // Zero-length arrow: prefer endPoint so user can extend it
+        if arrowLength < 1 {
+            if distToEnd < handleRadius { return .endPoint }
+            return nil
         }
-        let endRect = CGRect(
-            x: endPoint.x - handleSize/2, y: endPoint.y - handleSize/2,
-            width: handleSize, height: handleSize
-        )
-        if endRect.contains(point) {
-            return .endPoint
+
+        // Short arrows: prefer body at midpoint to allow dragging
+        if arrowLength < handleRadius * 2 {
+            let distToLine = distanceFromPointToLine(point: point, lineStart: startPoint, lineEnd: endPoint)
+            if distToLine < 10 {
+                let midX = (startPoint.x + endPoint.x) / 2
+                let midY = (startPoint.y + endPoint.y) / 2
+                let distToMid = hypot(point.x - midX, point.y - midY)
+                if distToMid < min(distToStart, distToEnd) {
+                    return .body
+                }
+            }
         }
+
+        // Circular endpoint detection (not rectangular)
+        if distToStart < handleRadius { return .startPoint }
+        if distToEnd < handleRadius { return .endPoint }
 
         // Check line body
         if contains(point: point) {

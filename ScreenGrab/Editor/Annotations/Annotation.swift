@@ -43,44 +43,43 @@ enum AnnotationHandle {
 
 extension Annotation {
     func contains(point: CGPoint) -> Bool {
-        return bounds.contains(point)
+        return bounds.insetBy(dx: -strokeWidth / 2, dy: -strokeWidth / 2).contains(point)
     }
 
     func hitTest(point: CGPoint) -> AnnotationHandle? {
         let handleSize: CGFloat = 10
 
-        // Check corners
-        let blRect = CGRect(
-            x: bounds.minX - handleSize/2, y: bounds.minY - handleSize/2,
-            width: handleSize, height: handleSize
-        )
-        if blRect.contains(point) {
-            return .bottomLeft
-        }
-        let brRect = CGRect(
-            x: bounds.maxX - handleSize/2, y: bounds.minY - handleSize/2,
-            width: handleSize, height: handleSize
-        )
-        if brRect.contains(point) {
-            return .bottomRight
-        }
-        let tlRect = CGRect(
-            x: bounds.minX - handleSize/2, y: bounds.maxY - handleSize/2,
-            width: handleSize, height: handleSize
-        )
-        if tlRect.contains(point) {
-            return .topLeft
-        }
-        let trRect = CGRect(
-            x: bounds.maxX - handleSize/2, y: bounds.maxY - handleSize/2,
-            width: handleSize, height: handleSize
-        )
-        if trRect.contains(point) {
-            return .topRight
+        let corners: [(CGPoint, AnnotationHandle)] = [
+            (CGPoint(x: bounds.minX, y: bounds.minY), .bottomLeft),
+            (CGPoint(x: bounds.maxX, y: bounds.minY), .bottomRight),
+            (CGPoint(x: bounds.minX, y: bounds.maxY), .topLeft),
+            (CGPoint(x: bounds.maxX, y: bounds.maxY), .topRight),
+        ]
+
+        // Find the closest handle whose rect contains the point
+        var closestHandle: AnnotationHandle?
+        var closestDist = CGFloat.infinity
+
+        for (corner, handle) in corners {
+            let handleRect = CGRect(
+                x: corner.x - handleSize / 2, y: corner.y - handleSize / 2,
+                width: handleSize, height: handleSize
+            )
+            if handleRect.contains(point) {
+                let dist = hypot(point.x - corner.x, point.y - corner.y)
+                if dist < closestDist {
+                    closestDist = dist
+                    closestHandle = handle
+                }
+            }
         }
 
-        // Check body
-        if bounds.contains(point) {
+        if let handle = closestHandle {
+            return handle
+        }
+
+        // Check body (includes stroke width overhang)
+        if contains(point: point) {
             return .body
         }
 

@@ -19,6 +19,10 @@ class TextAnnotation: Annotation {
         }
         set {
             position = newValue.origin
+            let oldHeight = textSize().height
+            if oldHeight > 0 && newValue.height > 0 {
+                fontSize = fontSize * (newValue.height / oldHeight)
+            }
         }
     }
 

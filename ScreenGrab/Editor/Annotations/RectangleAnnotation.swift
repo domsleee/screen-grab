@@ -4,7 +4,9 @@ import AppKit
 
 class RectangleAnnotation: Annotation {
     let id: UUID
-    var bounds: CGRect
+    var bounds: CGRect {
+        didSet { bounds = bounds.standardized }
+    }
     var color: CGColor
     var strokeWidth: CGFloat
 

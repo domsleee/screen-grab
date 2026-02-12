@@ -32,7 +32,8 @@ final class AppSettings {
             Key.strokeWidth.rawValue: 3.0,
             Key.copyToClipboard.rawValue: true,
             Key.playSound.rawValue: true,
-            Key.savePath.rawValue: ("~/Pictures/ScreenGrab" as NSString).expandingTildeInPath
+            Key.savePath.rawValue: ("~/Pictures/ScreenGrab" as NSString).expandingTildeInPath,
+            "textBackgroundOpacity": 0.75
         ])
     }
 
@@ -90,10 +91,7 @@ final class AppSettings {
     }
 
     var textBackgroundOpacity: CGFloat {
-        get {
-            let val = defaults.double(forKey: "textBackgroundOpacity")
-            return val == 0 ? 0.75 : CGFloat(val)
-        }
+        get { CGFloat(defaults.double(forKey: "textBackgroundOpacity")) }
         set { defaults.set(Double(newValue), forKey: "textBackgroundOpacity") }
     }
 

@@ -107,6 +107,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.makeKeyAndOrderFront(nil)
     }
 
+    private static let repoURL = "https://github.com/domsleee/screen-grab"
+
     @objc func showAbout() {
         if let existing = aboutWindow, existing.isVisible {
             existing.makeKeyAndOrderFront(nil)
@@ -115,31 +117,44 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 300, height: 200),
-            styleMask: [.titled, .closable],
+            contentRect: NSRect(x: 0, y: 0, width: 320, height: 320),
+            styleMask: [.titled, .closable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
-        window.title = "About ScreenGrab"
+        window.title = ""
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
         window.center()
         window.isReleasedWhenClosed = false
+        window.isMovableByWindowBackground = true
 
-        guard let windowContentView = window.contentView else { return }
-        let contentView = NSView(frame: windowContentView.bounds)
-        contentView.autoresizingMask = [.width, .height]
+        // Stack view for vertical layout
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .centerX
+        stack.spacing = 4
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.edgeInsets = NSEdgeInsets(top: 36, left: 40, bottom: 24, right: 40)
 
         // App icon
-        let iconView = NSImageView(frame: NSRect(x: 115, y: 110, width: 64, height: 64))
+        let iconView = NSImageView()
         iconView.image = NSApp.applicationIconImage
         iconView.imageScaling = .scaleProportionallyUpOrDown
-        contentView.addSubview(iconView)
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            iconView.widthAnchor.constraint(equalToConstant: 96),
+            iconView.heightAnchor.constraint(equalToConstant: 96),
+        ])
+        stack.addArrangedSubview(iconView)
+        stack.setCustomSpacing(12, after: iconView)
 
         // App name
         let nameLabel = NSTextField(labelWithString: "ScreenGrab")
-        nameLabel.font = NSFont.systemFont(ofSize: 18, weight: .bold)
+        nameLabel.font = NSFont.systemFont(ofSize: 20, weight: .semibold)
         nameLabel.alignment = .center
-        nameLabel.frame = NSRect(x: 0, y: 80, width: 300, height: 24)
-        contentView.addSubview(nameLabel)
+        stack.addArrangedSubview(nameLabel)
+        stack.setCustomSpacing(2, after: nameLabel)
 
         // Version
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Unknown"
@@ -147,18 +162,67 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         versionLabel.font = NSFont.systemFont(ofSize: 12)
         versionLabel.textColor = .secondaryLabelColor
         versionLabel.alignment = .center
-        versionLabel.frame = NSRect(x: 0, y: 55, width: 300, height: 18)
-        contentView.addSubview(versionLabel)
+        stack.addArrangedSubview(versionLabel)
+        stack.setCustomSpacing(16, after: versionLabel)
+
+        // Separator
+        let separator = NSBox()
+        separator.boxType = .separator
+        separator.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            separator.widthAnchor.constraint(equalToConstant: 200),
+        ])
+        stack.addArrangedSubview(separator)
+        stack.setCustomSpacing(12, after: separator)
+
+        // Build info (commit link + date)
+        let commitHash = Bundle.main.infoDictionary?["GitCommitHash"] as? String ?? "unknown"
+        let commitDate = Bundle.main.infoDictionary?["GitCommitDate"] as? String ?? ""
+        let buildText = NSMutableAttributedString()
+        let commitURL = URL(string: "\(Self.repoURL)/commit/\(commitHash)")!
+        let linkAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular),
+            .link: commitURL,
+        ]
+        buildText.append(NSAttributedString(string: commitHash, attributes: linkAttrs))
+        if !commitDate.isEmpty {
+            let dateAttrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 11),
+                .foregroundColor: NSColor.tertiaryLabelColor,
+            ]
+            buildText.append(NSAttributedString(string: "  \(commitDate)", attributes: dateAttrs))
+        }
+        let buildField = NSTextField(labelWithString: "")
+        buildField.attributedStringValue = buildText
+        buildField.allowsEditingTextAttributes = true
+        buildField.isSelectable = true
+        buildField.alignment = .center
+        stack.addArrangedSubview(buildField)
+        stack.setCustomSpacing(4, after: buildField)
+
+        // GitHub repo link
+        let repoText = NSMutableAttributedString()
+        let repoLinkAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 11),
+            .link: URL(string: Self.repoURL)!,
+        ]
+        repoText.append(NSAttributedString(string: Self.repoURL.replacingOccurrences(of: "https://", with: ""), attributes: repoLinkAttrs))
+        let repoField = NSTextField(labelWithString: "")
+        repoField.attributedStringValue = repoText
+        repoField.allowsEditingTextAttributes = true
+        repoField.isSelectable = true
+        repoField.alignment = .center
+        stack.addArrangedSubview(repoField)
+        stack.setCustomSpacing(16, after: repoField)
 
         // Copyright
         let copyrightLabel = NSTextField(labelWithString: "\u{00A9} 2026 ScreenGrab")
         copyrightLabel.font = NSFont.systemFont(ofSize: 11)
         copyrightLabel.textColor = .tertiaryLabelColor
         copyrightLabel.alignment = .center
-        copyrightLabel.frame = NSRect(x: 0, y: 20, width: 300, height: 16)
-        contentView.addSubview(copyrightLabel)
+        stack.addArrangedSubview(copyrightLabel)
 
-        window.contentView = contentView
+        window.contentView = stack
         aboutWindow = window
 
         NSApp.activate(ignoringOtherApps: true)

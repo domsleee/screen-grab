@@ -53,12 +53,16 @@ PLIST="ScreenGrab.app/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Delete :GitCommitDate" "$PLIST" 2>/dev/null || true
 /usr/libexec/PlistBuddy -c "Add :GitCommitDate string $GIT_DATE" "$PLIST"
 
-# Inject version override if provided
+# For release builds (--version), keep the release bundle ID.
+# For dev builds, use a separate bundle ID so macOS doesn't confuse permissions.
 if [ -n "$VERSION_OVERRIDE" ]; then
     /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION_OVERRIDE" "$PLIST"
     # Strip leading 'v' and any suffix for CFBundleVersion (e.g. v0.1.0-Beta -> 0.1.0)
     BUNDLE_VERSION=$(echo "$VERSION_OVERRIDE" | sed 's/^v//' | sed 's/-.*//')
     /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUNDLE_VERSION" "$PLIST"
+else
+    /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.sharexmac.app.dev" "$PLIST"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleName ScreenGrab Dev" "$PLIST"
 fi
 
 echo "Signing with identity: $SIGN_IDENTITY"

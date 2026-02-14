@@ -38,6 +38,7 @@ else
 fi
 
 echo "Creating app bundle..."
+mkdir -p ScreenGrab.app/Contents/MacOS
 cp .build/release/ScreenGrab ScreenGrab.app/Contents/MacOS/
 cp ScreenGrab/Resources/Info.plist ScreenGrab.app/Contents/Info.plist
 

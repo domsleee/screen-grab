@@ -61,7 +61,7 @@ if [ -n "$VERSION_OVERRIDE" ]; then
     BUNDLE_VERSION=$(echo "$VERSION_OVERRIDE" | sed 's/^v//' | sed 's/-.*//')
     /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUNDLE_VERSION" "$PLIST"
 else
-    /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.sharexmac.app.dev" "$PLIST"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.screengrab.app.dev" "$PLIST"
     /usr/libexec/PlistBuddy -c "Set :CFBundleName ScreenGrab Dev" "$PLIST"
 fi
 

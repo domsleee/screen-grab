@@ -257,52 +257,63 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func requestScreenRecordingPermission() {
+        // Registers the app in System Settings → Screen Recording list
+        if CGPreflightScreenCaptureAccess() {
+            logInfo("Screen recording permission already granted")
+            return
+        }
+        CGRequestScreenCaptureAccess()
+
         // Temporarily become regular app so permission dialog stays open
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
 
-        // Use ScreenCaptureKit to trigger permission request
         Task {
             do {
-                // This will trigger the permission dialog and WAIT for user response
                 let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
                 logInfo("Screen recording permission granted, found \(content.displays.count) displays")
-
-                // Permission granted - go back to accessory mode
                 await MainActor.run {
                     NSApp.setActivationPolicy(.accessory)
                 }
             } catch {
                 logError("Screen recording permission denied or error: \(error)")
 
-                // Reset stale TCC entry — macOS doesn't clear it when code signature changes,
-                // which causes the permission toggle to slide back. Resetting gives a fresh prompt on relaunch.
-                let bundleId = Bundle.main.bundleIdentifier ?? "com.sharexmac.app"
-                logInfo("Resetting ScreenCapture permission for \(bundleId)")
-                let process = Process()
-                process.executableURL = URL(fileURLWithPath: "/usr/bin/tccutil")
-                process.arguments = ["reset", "ScreenCapture", bundleId]
-                try? process.run()
-                process.waitUntilExit()
-
-                // Show alert to user
                 await MainActor.run {
                     let alert = NSAlert()
                     alert.messageText = "Screen Recording Permission Required"
                     alert.informativeText = "ScreenGrab needs Screen Recording permission. " +
-                        "The app will now relaunch — please grant permission when prompted."
+                        "Please enable it in System Settings → Privacy & Security → Screen Recording, then relaunch."
                     alert.alertStyle = .warning
+                    alert.addButton(withTitle: "Open System Settings")
                     alert.addButton(withTitle: "Relaunch")
                     alert.addButton(withTitle: "Quit")
 
                     let response = alert.runModal()
                     if response == .alertFirstButtonReturn {
-                        // Relaunch the app so macOS shows a fresh permission prompt
-                        let url = URL(fileURLWithPath: Bundle.main.bundlePath)
-                        NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
+                        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
+                        NSApp.terminate(nil)
+                    } else if response == .alertSecondButtonReturn {
+                        self.relaunchApp()
+                    } else {
+                        NSApp.terminate(nil)
                     }
-                    NSApp.terminate(nil)
                 }
+            }
+        }
+    }
+
+    private func relaunchApp() {
+        let bundlePath = Bundle.main.bundlePath
+        logInfo("Relaunching from: \(bundlePath)")
+        let url = URL(fileURLWithPath: bundlePath)
+        let config = NSWorkspace.OpenConfiguration()
+        config.createsNewApplicationInstance = true
+        NSWorkspace.shared.openApplication(at: url, configuration: config) { _, error in
+            if let error = error {
+                logError("Relaunch failed: \(error)")
+            }
+            DispatchQueue.main.async {
+                NSApp.terminate(nil)
             }
         }
     }

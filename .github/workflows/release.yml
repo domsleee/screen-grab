@@ -82,7 +82,7 @@ jobs:
             depends_on macos: ">= :ventura"
 
             postflight do
-              system "xattr -d com.apple.quarantine #{appdir}/ScreenGrab.app"
+              system "xattr -dr com.apple.quarantine #{appdir}/ScreenGrab.app"
             end
 
             app "ScreenGrab.app"

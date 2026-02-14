@@ -2,21 +2,25 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleExecutable</key>
-    <string>ScreenGrab</string>
-    <key>CFBundleIdentifier</key>
-    <string>com.screengrab.app</string>
-    <key>CFBundleName</key>
-    <string>ScreenGrab</string>
-    <key>CFBundleVersion</key>
-    <string>1.0</string>
-    <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
-    <key>LSUIElement</key>
-    <true/>
-    <key>LSMinimumSystemVersion</key>
-    <string>14.0</string>
-    <key>NSScreenCaptureUsageDescription</key>
-    <string>ScreenGrab needs screen recording permission to capture screenshots.</string>
+	<key>CFBundleExecutable</key>
+	<string>ScreenGrab</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.screengrab.app</string>
+	<key>CFBundleName</key>
+	<string>ScreenGrab</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1.0</string>
+	<key>GitCommitDate</key>
+	<string>2026-02-12</string>
+	<key>GitCommitHash</key>
+	<string>e684c77</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>ScreenGrab needs screen recording permission to capture screenshots.</string>
 </dict>
 </plist>

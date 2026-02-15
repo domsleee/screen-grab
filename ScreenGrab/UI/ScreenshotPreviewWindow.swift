@@ -11,6 +11,7 @@ class ScreenshotPreviewWindow: NSPanel {
 
     private var dismissTimer: Timer?
     private var filePath: String?
+    private var isDismissing = false
     private var isDragging = false
     private var dragStartLocation: NSPoint = .zero
     var onDismiss: (() -> Void)?
@@ -133,6 +134,8 @@ class ScreenshotPreviewWindow: NSPanel {
     }
 
     private func fadeOutAndClose() {
+        guard !isDismissing else { return }
+        isDismissing = true
         dismissTimer?.invalidate()
         dismissTimer = nil
 
@@ -146,6 +149,8 @@ class ScreenshotPreviewWindow: NSPanel {
     }
 
     private func dismissImmediately() {
+        guard !isDismissing else { return }
+        isDismissing = true
         dismissTimer?.invalidate()
         dismissTimer = nil
         orderOut(nil)

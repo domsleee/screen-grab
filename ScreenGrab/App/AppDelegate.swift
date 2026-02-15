@@ -158,7 +158,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Version
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Unknown"
-        let versionLabel = NSTextField(labelWithString: "Version \(version)")
+        let isDev = Bundle.main.bundleIdentifier?.hasSuffix(".dev") == true
+        let versionLabel = NSTextField(labelWithString: "Version \(version)\(isDev ? " (Dev)" : "")")
         versionLabel.font = NSFont.systemFont(ofSize: 12)
         versionLabel.textColor = .secondaryLabelColor
         versionLabel.alignment = .center

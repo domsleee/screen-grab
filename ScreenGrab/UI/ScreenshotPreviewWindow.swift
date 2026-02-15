@@ -13,7 +13,6 @@ class ScreenshotPreviewWindow: NSPanel {
     private var filePath: String?
     private var isDragging = false
     private var dragStartLocation: NSPoint = .zero
-    private var initialFrame: NSRect = .zero
     var onDismiss: (() -> Void)?
 
     init(image: NSImage, filePath: String?, screen: NSScreen) {
@@ -72,12 +71,13 @@ class ScreenshotPreviewWindow: NSPanel {
 
         // Slide in
         let finalX = visibleFrame.maxX - thumbWidth - Self.padding
-        let finalFrame = NSRect(x: finalX, y: startY, width: thumbWidth, height: thumbHeight)
-        self.initialFrame = finalFrame
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = Self.animationDuration
             ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            self.animator().setFrame(finalFrame, display: true)
+            self.animator().setFrame(
+                NSRect(x: finalX, y: startY, width: thumbWidth, height: thumbHeight),
+                display: true
+            )
         }
 
         // Auto-dismiss timer — explicitly use main RunLoop
@@ -118,10 +118,7 @@ class ScreenshotPreviewWindow: NSPanel {
 
     override func mouseUp(with event: NSEvent) {
         if isDragging {
-            // Only dismiss if dragged past the window's original edge
-            if !self.frame.intersects(initialFrame) {
-                fadeOutAndClose()
-            }
+            fadeOutAndClose()
         } else {
             // Click - open file in Finder
             if let filePath = filePath {

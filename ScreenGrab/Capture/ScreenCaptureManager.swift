@@ -5,6 +5,7 @@ import ScreenCaptureKit
 class ScreenCaptureManager {
     private var overlayWindows: [SelectionOverlayWindow] = []
     private var previousApp: NSRunningApplication?
+    private var previewWindow: ScreenshotPreviewWindow?
 
     private static let timestampFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -81,18 +82,27 @@ class ScreenCaptureManager {
             logInfo("Copied to clipboard")
 
             // Save to file
-            saveImageToFile(nsImage)
+            let savedPath = saveImageToFile(nsImage)
 
             // Play capture sound
             if AppSettings.shared.playSound {
-                NSSound(named: .init("Tink"))?.play()
+                NSSound(contentsOf: URL(fileURLWithPath: "/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/system/Screen Capture.aif"), byReference: true)?.play()
+            }
+
+            // Show preview thumbnail on the screen where the capture happened
+            let captureImage = nsImage
+            let captureFilePath = savedPath
+            let captureScreenFrame = screenFrame
+            DispatchQueue.main.async { [weak self] in
+                self?.showPreviewThumbnail(image: captureImage, filePath: captureFilePath, screenFrame: captureScreenFrame)
             }
         }
 
         cleanupOverlays()
     }
 
-    private func saveImageToFile(_ image: NSImage) {
+    @discardableResult
+    private func saveImageToFile(_ image: NSImage) -> String? {
         let savePath = AppSettings.shared.savePath
         let fileManager = FileManager.default
 
@@ -103,7 +113,7 @@ class ScreenCaptureManager {
             } catch {
                 logError("Failed to create save directory: \(error)")
                 showCaptureError("Could not create save directory: \(savePath)")
-                return
+                return nil
             }
         }
 
@@ -117,16 +127,31 @@ class ScreenCaptureManager {
               let bitmap = NSBitmapImageRep(data: tiffData),
               let pngData = bitmap.representation(using: .png, properties: [:]) else {
             logError("Failed to create PNG data")
-            return
+            return nil
         }
 
         do {
             try pngData.write(to: URL(fileURLWithPath: filePath))
             logInfo("Saved screenshot to \(filePath)")
+            return filePath
         } catch {
             logError("Failed to save screenshot: \(error)")
             showCaptureError("Could not save screenshot to \(filePath)")
+            return nil
         }
+    }
+
+    private func showPreviewThumbnail(image: NSImage, filePath: String?, screenFrame: CGRect) {
+        // Dismiss any existing preview
+        previewWindow?.dismiss()
+        previewWindow = nil
+
+        // Find the NSScreen matching the capture screen frame
+        let screen = NSScreen.screens.first(where: { abs($0.frame.origin.x - screenFrame.origin.x) < 1 && abs($0.frame.width - screenFrame.width) < 1 }) ?? NSScreen.main ?? NSScreen.screens[0]
+
+        let preview = ScreenshotPreviewWindow(image: image, filePath: filePath, screen: screen)
+        preview.orderFrontRegardless()
+        previewWindow = preview
     }
 
     private func cleanupOverlays() {

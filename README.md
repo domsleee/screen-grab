@@ -38,7 +38,7 @@ bash scripts/install.sh  # builds and copies ScreenGrab.app to /Applications
 
 Launch ScreenGrab — it runs in the background with a menu bar icon. Click the icon to start a capture, open settings, or quit.
 
-On first launch, macOS will ask for **Screen Recording** permission (System Settings → Privacy & Security → Screen & System Audio Recording).
+On first launch, macOS will ask for **Screen Recording** permission.
 
 ## Keyboard Shortcuts
 

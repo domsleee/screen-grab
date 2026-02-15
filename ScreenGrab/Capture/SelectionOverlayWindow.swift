@@ -2842,6 +2842,7 @@ class SelectionView: NSView {
                     selected.fontSize = newSize
                     textFontSize = newSize
                     syncAnnotationLayers()
+                    updateSelectionHandlesLayer()
                 } else {
                     textFontSize = newSize
                 }
@@ -2938,10 +2939,17 @@ class SelectionView: NSView {
             tf.drawsBackground = true
             tf.target = self
             tf.action = #selector(fontSizeFieldAction(_:))
+            tf.delegate = self
             fontSizeTextField = tf
         }
         tf.stringValue = "\(Int(displaySize))"
-        tf.frame = fontSizeFieldRect
+        // Vertically center the text field within the font size field rect.
+        // NSTextField has ~3pt internal top padding, so inset to align with the drawn label.
+        let insetY: CGFloat = 3
+        tf.frame = NSRect(x: fontSizeFieldRect.minX,
+                          y: fontSizeFieldRect.minY + insetY,
+                          width: fontSizeFieldRect.width,
+                          height: fontSizeFieldRect.height - insetY * 2)
         if tf.superview == nil {
             addSubview(tf)
         }
@@ -2965,6 +2973,7 @@ class SelectionView: NSView {
                 selected.fontSize = newSize
                 textFontSize = newSize
                 syncAnnotationLayers()
+                updateSelectionHandlesLayer()
             } else {
                 textFontSize = newSize
             }
@@ -3310,6 +3319,18 @@ class SelectionView: NSView {
 
         // Ensure layer z-ordering matches array order
         reorderAnnotationLayers()
+    }
+}
+
+// MARK: - NSTextFieldDelegate (font size field numeric filtering)
+
+extension SelectionView: NSTextFieldDelegate {
+    func controlTextDidChange(_ notification: Notification) {
+        guard let tf = notification.object as? NSTextField else { return }
+        let filtered = tf.stringValue.filter { $0.isNumber }
+        if filtered != tf.stringValue {
+            tf.stringValue = filtered
+        }
     }
 }
 

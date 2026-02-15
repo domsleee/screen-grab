@@ -280,6 +280,43 @@ final class TextPopoverLayoutTests: XCTestCase {
         )
     }
 
+    // MARK: - Font Size Field Numeric Filtering Tests
+
+    func testFontSizeFieldStripsNonNumericCharacters() {
+        let view = SelectionView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+        // Create and expose the text field by simulating showFontSizeTextField internals
+        let tf = NSTextField()
+        tf.delegate = view
+
+        // Simulate typing "12abc3" then triggering controlTextDidChange
+        tf.stringValue = "12abc3"
+        let notification = Notification(name: NSControl.textDidChangeNotification, object: tf)
+        view.controlTextDidChange(notification)
+        XCTAssertEqual(tf.stringValue, "123", "Non-numeric characters should be stripped")
+    }
+
+    func testFontSizeFieldAllowsPureNumericInput() {
+        let view = SelectionView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+        let tf = NSTextField()
+        tf.delegate = view
+
+        tf.stringValue = "48"
+        let notification = Notification(name: NSControl.textDidChangeNotification, object: tf)
+        view.controlTextDidChange(notification)
+        XCTAssertEqual(tf.stringValue, "48", "Pure numeric input should be unchanged")
+    }
+
+    func testFontSizeFieldStripsAllNonNumeric() {
+        let view = SelectionView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+        let tf = NSTextField()
+        tf.delegate = view
+
+        tf.stringValue = "abc"
+        let notification = Notification(name: NSControl.textDidChangeNotification, object: tf)
+        view.controlTextDidChange(notification)
+        XCTAssertEqual(tf.stringValue, "", "All-alpha input should result in empty string")
+    }
+
     /// Regression test: with the old hardcoded width of 28, the "100" button
     /// overflowed the popover by 12px.
     func testHardcoded28WidthWouldOverflow() {

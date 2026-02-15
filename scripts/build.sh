@@ -66,6 +66,12 @@ else
 fi
 
 echo "Signing with identity: $SIGN_IDENTITY"
-codesign --force --deep --sign "$SIGN_IDENTITY" --options runtime ScreenGrab.app
+if [ -n "$VERSION_OVERRIDE" ]; then
+    # Release builds: hardened runtime required for notarization
+    codesign --force --deep --sign "$SIGN_IDENTITY" --options runtime ScreenGrab.app
+else
+    # Dev builds: skip hardened runtime so trusted self-signed cert works without prompts
+    codesign --force --deep --sign "$SIGN_IDENTITY" ScreenGrab.app
+fi
 
 echo "Done! Run with: open ScreenGrab.app"

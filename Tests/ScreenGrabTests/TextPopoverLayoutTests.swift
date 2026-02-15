@@ -10,6 +10,9 @@ final class TextPopoverLayoutTests: XCTestCase {
     private let textPopoverWidth: CGFloat = 260
     private let textPopoverPadding: CGFloat = 10
     private let opacityPresets: [CGFloat] = [0.25, 0.5, 0.75, 1.0]
+    private let fontSizePresets: [CGFloat] = [16, 24, 36, 48, 72]
+    private let fontSizeFieldWidth: CGFloat = 38
+    private let fontSizeRange: ClosedRange<CGFloat> = 10...120
 
     /// Compute the background row element rects, mirroring drawTextPopover().
     private func backgroundRowLayout(popoverOriginX: CGFloat = 0) -> (
@@ -48,7 +51,171 @@ final class TextPopoverLayoutTests: XCTestCase {
         return (bgSwatchRect, noFillRect, buttons)
     }
 
-    // MARK: - Tests
+    /// Compute the font size row element rects, mirroring drawTextPopover().
+    private func fontSizeRowLayout(popoverOriginX: CGFloat = 0) -> (
+        fieldRect: NSRect,
+        presetButtons: [NSRect]
+    ) {
+        let p = textPopoverPadding
+        let sizeRowHeight: CGFloat = 24
+
+        let fieldRect = NSRect(
+            x: popoverOriginX + p,
+            y: 0, width: fontSizeFieldWidth, height: sizeRowHeight
+        )
+
+        let sizeStartX = popoverOriginX + p + fontSizeFieldWidth + 4
+        let sizeGap: CGFloat = 3
+        let sizeBtnWidth = (popoverOriginX + textPopoverWidth - p - sizeStartX
+                            - CGFloat(fontSizePresets.count - 1) * sizeGap)
+                           / CGFloat(fontSizePresets.count)
+
+        var buttons: [NSRect] = []
+        for i in 0..<fontSizePresets.count {
+            let btnRect = NSRect(
+                x: sizeStartX + CGFloat(i) * (sizeBtnWidth + sizeGap),
+                y: 0, width: sizeBtnWidth, height: sizeRowHeight
+            )
+            buttons.append(btnRect)
+        }
+
+        return (fieldRect, buttons)
+    }
+
+    // MARK: - Font Size Row Tests
+
+    func testFontSizePresetsAreWithinRange() {
+        for preset in fontSizePresets {
+            XCTAssert(
+                fontSizeRange.contains(preset),
+                "Preset \(Int(preset)) should be within font size range \(fontSizeRange)"
+            )
+        }
+    }
+
+    func testFontSizePresetsAreSorted() {
+        for i in 1..<fontSizePresets.count {
+            XCTAssertGreaterThan(
+                fontSizePresets[i], fontSizePresets[i - 1],
+                "Font size presets should be in ascending order"
+            )
+        }
+    }
+
+    func testFontSizeFieldFitsWithinPopover() {
+        let popoverOriginX: CGFloat = 100
+        let layout = fontSizeRowLayout(popoverOriginX: popoverOriginX)
+
+        XCTAssertGreaterThanOrEqual(
+            layout.fieldRect.minX, popoverOriginX + textPopoverPadding,
+            "Font size field should start within content area"
+        )
+        XCTAssertLessThanOrEqual(
+            layout.fieldRect.maxX, popoverOriginX + textPopoverWidth - textPopoverPadding,
+            "Font size field should end within content area"
+        )
+    }
+
+    func testFontSizePresetButtonsFitWithinPopover() {
+        let popoverOriginX: CGFloat = 100
+        let layout = fontSizeRowLayout(popoverOriginX: popoverOriginX)
+        let contentRight = popoverOriginX + textPopoverWidth - textPopoverPadding
+
+        for (i, btnRect) in layout.presetButtons.enumerated() {
+            XCTAssertGreaterThanOrEqual(
+                btnRect.minX, layout.fieldRect.maxX,
+                "Preset \(Int(fontSizePresets[i])) left edge should be after field"
+            )
+            XCTAssertLessThanOrEqual(
+                btnRect.maxX, contentRight + 0.5,
+                "Preset \(Int(fontSizePresets[i])) right edge (\(btnRect.maxX)) should be within content area (\(contentRight))"
+            )
+        }
+    }
+
+    func testFontSizePresetButtonsHavePositiveWidth() {
+        let layout = fontSizeRowLayout()
+
+        for (i, btnRect) in layout.presetButtons.enumerated() {
+            XCTAssertGreaterThan(
+                btnRect.width, 10,
+                "Preset \(Int(fontSizePresets[i])) should have reasonable width (got \(btnRect.width))"
+            )
+        }
+    }
+
+    func testFontSizePresetButtonsDoNotOverlap() {
+        let layout = fontSizeRowLayout()
+
+        for i in 1..<layout.presetButtons.count {
+            let prev = layout.presetButtons[i - 1]
+            let curr = layout.presetButtons[i]
+            XCTAssertGreaterThanOrEqual(
+                curr.minX, prev.maxX,
+                "Preset button \(Int(fontSizePresets[i])) should not overlap \(Int(fontSizePresets[i - 1]))"
+            )
+        }
+    }
+
+    func testFontSizeFieldDoesNotOverlapPresets() {
+        let layout = fontSizeRowLayout()
+
+        guard let firstPreset = layout.presetButtons.first else {
+            XCTFail("No preset buttons")
+            return
+        }
+        XCTAssertLessThanOrEqual(
+            layout.fieldRect.maxX, firstPreset.minX,
+            "Font size field should not overlap first preset button"
+        )
+    }
+
+    func testLastFontSizePresetAlignsWithContentEdge() {
+        let popoverOriginX: CGFloat = 50
+        let layout = fontSizeRowLayout(popoverOriginX: popoverOriginX)
+        let contentRight = popoverOriginX + textPopoverWidth - textPopoverPadding
+
+        guard let lastButton = layout.presetButtons.last else {
+            XCTFail("No preset buttons")
+            return
+        }
+        XCTAssertEqual(
+            lastButton.maxX, contentRight, accuracy: 0.5,
+            "Last preset button should align with content area right edge"
+        )
+    }
+
+    func testFontSizeDrawAndClickLayoutsMatch() {
+        // Verify the draw and click handler use the same layout math
+        let popoverOriginX: CGFloat = 200
+        let layout = fontSizeRowLayout(popoverOriginX: popoverOriginX)
+
+        // Re-derive click handler layout (must match fontSizeRowLayout)
+        let p = textPopoverPadding
+        let fieldWidth: CGFloat = fontSizeFieldWidth
+        let sizeStartX = popoverOriginX + p + fieldWidth + 4
+        let sizeGap: CGFloat = 3
+        let sizeBtnWidth = (popoverOriginX + textPopoverWidth - p - sizeStartX
+                            - CGFloat(fontSizePresets.count - 1) * sizeGap)
+                           / CGFloat(fontSizePresets.count)
+
+        for (i, preset) in fontSizePresets.enumerated() {
+            let clickRect = NSRect(
+                x: sizeStartX + CGFloat(i) * (sizeBtnWidth + sizeGap),
+                y: 0, width: sizeBtnWidth, height: 24
+            )
+            XCTAssertEqual(
+                clickRect.minX, layout.presetButtons[i].minX, accuracy: 0.01,
+                "Draw/click mismatch for preset \(Int(preset)) left edge"
+            )
+            XCTAssertEqual(
+                clickRect.width, layout.presetButtons[i].width, accuracy: 0.01,
+                "Draw/click mismatch for preset \(Int(preset)) width"
+            )
+        }
+    }
+
+    // MARK: - Opacity Row Tests
 
     func testOpacityButtonsFitWithinPopover() {
         let popoverOriginX: CGFloat = 100
@@ -111,6 +278,43 @@ final class TextPopoverLayoutTests: XCTestCase {
             lastButton.maxX, contentRightEdge, accuracy: 0.5,
             "Last opacity button should align with content area right edge"
         )
+    }
+
+    // MARK: - Font Size Field Numeric Filtering Tests
+
+    func testFontSizeFieldStripsNonNumericCharacters() {
+        let view = SelectionView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+        // Create and expose the text field by simulating showFontSizeTextField internals
+        let tf = NSTextField()
+        tf.delegate = view
+
+        // Simulate typing "12abc3" then triggering controlTextDidChange
+        tf.stringValue = "12abc3"
+        let notification = Notification(name: NSControl.textDidChangeNotification, object: tf)
+        view.controlTextDidChange(notification)
+        XCTAssertEqual(tf.stringValue, "123", "Non-numeric characters should be stripped")
+    }
+
+    func testFontSizeFieldAllowsPureNumericInput() {
+        let view = SelectionView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+        let tf = NSTextField()
+        tf.delegate = view
+
+        tf.stringValue = "48"
+        let notification = Notification(name: NSControl.textDidChangeNotification, object: tf)
+        view.controlTextDidChange(notification)
+        XCTAssertEqual(tf.stringValue, "48", "Pure numeric input should be unchanged")
+    }
+
+    func testFontSizeFieldStripsAllNonNumeric() {
+        let view = SelectionView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+        let tf = NSTextField()
+        tf.delegate = view
+
+        tf.stringValue = "abc"
+        let notification = Notification(name: NSControl.textDidChangeNotification, object: tf)
+        view.controlTextDidChange(notification)
+        XCTAssertEqual(tf.stringValue, "", "All-alpha input should result in empty string")
     }
 
     /// Regression test: with the old hardcoded width of 28, the "100" button

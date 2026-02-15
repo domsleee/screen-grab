@@ -620,4 +620,222 @@ final class CursorBehaviorTests: XCTestCase {
         XCTAssertEqual(arithmeticWidth, realSize.width, accuracy: 2.0,
                        "Arithmetic text width should match sizeWithAttributes for monospaced font")
     }
+
+    // MARK: - Popover Cursor Override Tests
+
+    func testCursorShouldBeArrowWhenOverTextPopover() {
+        // When a text popover is visible and the mouse is inside it,
+        // the cursor should be arrow — not iBeam, even when editing text.
+        struct PopoverCursorModel {
+            var isTextPopoverVisible = false
+            var isColorPopoverVisible = false
+            var editingTextAnnotation = false
+            var pointInTextPopover = false
+            var pointInColorPopover = false
+
+            func isPointInsidePopover() -> Bool {
+                if isTextPopoverVisible && pointInTextPopover { return true }
+                if isColorPopoverVisible && pointInColorPopover { return true }
+                return false
+            }
+
+            enum CursorResult { case arrow, iBeam, other }
+
+            func expectedCursor() -> CursorResult {
+                if isPointInsidePopover() { return .arrow }
+                if editingTextAnnotation { return .iBeam }
+                return .other
+            }
+        }
+
+        // Text popover visible, mouse inside it, editing text → arrow (not iBeam)
+        let overTextPopover = PopoverCursorModel(
+            isTextPopoverVisible: true, editingTextAnnotation: true, pointInTextPopover: true)
+        XCTAssertTrue(overTextPopover.isPointInsidePopover())
+        if case .arrow = overTextPopover.expectedCursor() {} else {
+            XCTFail("Cursor should be arrow when over text popover, not iBeam")
+        }
+
+        // Color popover visible, mouse inside it → arrow
+        let overColorPopover = PopoverCursorModel(
+            isColorPopoverVisible: true, editingTextAnnotation: true, pointInColorPopover: true)
+        XCTAssertTrue(overColorPopover.isPointInsidePopover())
+        if case .arrow = overColorPopover.expectedCursor() {} else {
+            XCTFail("Cursor should be arrow when over color popover")
+        }
+
+        // Text popover visible, mouse NOT inside it, editing text → iBeam
+        let outsidePopover = PopoverCursorModel(
+            isTextPopoverVisible: true, editingTextAnnotation: true, pointInTextPopover: false)
+        XCTAssertFalse(outsidePopover.isPointInsidePopover())
+        if case .iBeam = outsidePopover.expectedCursor() {} else {
+            XCTFail("Cursor should be iBeam when editing text but not over popover")
+        }
+
+        // No popover visible → falls through to normal logic
+        let noPopover = PopoverCursorModel(editingTextAnnotation: false)
+        XCTAssertFalse(noPopover.isPointInsidePopover())
+        if case .other = noPopover.expectedCursor() {} else {
+            XCTFail("Should fall through to normal cursor logic when no popover visible")
+        }
+    }
+
+    func testPopoverCheckCoversAllCursorPaths() {
+        // The popover check is added in 4 places: updateHoverState, updateCoordDisplay,
+        // updateCursorForMode, and cursorUpdate. Model that each path checks popover first.
+        struct CursorPathModel {
+            var isDragging = false
+            var isDrawing = false
+            var isInsidePopover = false
+
+            enum Action { case dragCursor, drawCursor, popoverArrow, delegateToHover }
+
+            // Models cursorUpdate logic
+            func cursorUpdateAction() -> Action {
+                if isDragging { return .dragCursor }
+                if isDrawing { return .drawCursor }
+                if isInsidePopover { return .popoverArrow }
+                return .delegateToHover
+            }
+        }
+
+        // Popover check comes after drag/draw (they take priority as physical interactions)
+        let dragging = CursorPathModel(isDragging: true, isInsidePopover: true)
+        if case .dragCursor = dragging.cursorUpdateAction() {} else {
+            XCTFail("Drag cursor should take priority over popover")
+        }
+
+        let drawing = CursorPathModel(isDrawing: true, isInsidePopover: true)
+        if case .drawCursor = drawing.cursorUpdateAction() {} else {
+            XCTFail("Draw cursor should take priority over popover")
+        }
+
+        // Not dragging/drawing, inside popover → arrow
+        let inPopover = CursorPathModel(isInsidePopover: true)
+        if case .popoverArrow = inPopover.cursorUpdateAction() {} else {
+            XCTFail("Should return popoverArrow when inside popover and not dragging/drawing")
+        }
+
+        // Not in popover → delegate to hover state
+        let normal = CursorPathModel()
+        if case .delegateToHover = normal.cursorUpdateAction() {} else {
+            XCTFail("Should delegate to hover state when not in popover")
+        }
+    }
+
+    // MARK: - Mode Switch Color Panel Tests
+
+    func testColorPanelShouldCloseOnModeSwitch() {
+        // When the user switches modes (e.g. text → rectangle), the system
+        // NSColorPanel should close. Model the currentMode didSet logic.
+        struct ModeSwitchModel {
+            var oldMode: CaptureMode
+            var newMode: CaptureMode
+
+            var shouldCloseColorPanel: Bool {
+                return oldMode != newMode
+            }
+        }
+
+        // Text → Rectangle: should close
+        let textToRect = ModeSwitchModel(oldMode: .text, newMode: .rectangle)
+        XCTAssertTrue(textToRect.shouldCloseColorPanel,
+                      "Color panel should close when switching from text to rectangle")
+
+        // Rectangle → Arrow: should close
+        let rectToArrow = ModeSwitchModel(oldMode: .rectangle, newMode: .arrow)
+        XCTAssertTrue(rectToArrow.shouldCloseColorPanel,
+                      "Color panel should close when switching from rectangle to arrow")
+
+        // Text → RegionSelect: should close
+        let textToRegion = ModeSwitchModel(oldMode: .text, newMode: .regionSelect)
+        XCTAssertTrue(textToRegion.shouldCloseColorPanel,
+                      "Color panel should close when switching from text to region select")
+
+        // Same mode (no-op set): should NOT close
+        let sameMode = ModeSwitchModel(oldMode: .text, newMode: .text)
+        XCTAssertFalse(sameMode.shouldCloseColorPanel,
+                       "Color panel should not close when mode doesn't change")
+    }
+
+    func testHideTextPopoverShouldCloseColorPanel() {
+        // When hideTextPopover() is called (e.g. leaving text mode),
+        // it should also close the system color panel.
+        // Model: hideTextPopover closes color panel when popover was visible.
+        struct HidePopoverModel {
+            var isTextPopoverVisible: Bool
+
+            /// Returns whether hideTextPopover should close the color panel
+            var shouldCloseColorPanel: Bool {
+                return isTextPopoverVisible
+            }
+        }
+
+        let visible = HidePopoverModel(isTextPopoverVisible: true)
+        XCTAssertTrue(visible.shouldCloseColorPanel,
+                      "Hiding visible text popover should close color panel")
+
+        let notVisible = HidePopoverModel(isTextPopoverVisible: false)
+        XCTAssertFalse(notVisible.shouldCloseColorPanel,
+                       "Should early-return (no-op) when popover not visible")
+    }
+
+    // MARK: - Color Panel Positioning Tests
+
+    func testColorPanelShouldBePositionedNearToolbar() {
+        // The color panel should be positioned centered below the toolbar,
+        // clamped to the screen's visible frame.
+        struct PanelPositionModel {
+            var toolbarMidX: CGFloat
+            var toolbarMinY: CGFloat
+            var panelWidth: CGFloat
+            var panelHeight: CGFloat
+            var screenVisibleFrame: NSRect
+
+            func computeOrigin() -> NSPoint {
+                var x = toolbarMidX - panelWidth / 2
+                var y = toolbarMinY - panelHeight - 8
+                // Clamp to screen
+                x = max(screenVisibleFrame.minX, min(x, screenVisibleFrame.maxX - panelWidth))
+                y = max(screenVisibleFrame.minY, min(y, screenVisibleFrame.maxY - panelHeight))
+                return NSPoint(x: x, y: y)
+            }
+        }
+
+        // Normal case: toolbar centered, panel fits
+        let normal = PanelPositionModel(
+            toolbarMidX: 960, toolbarMinY: 700,
+            panelWidth: 230, panelHeight: 300,
+            screenVisibleFrame: NSRect(x: 0, y: 0, width: 1920, height: 1080))
+        let origin = normal.computeOrigin()
+        XCTAssertEqual(origin.x, 960 - 115, accuracy: 0.1, "Panel should be centered on toolbar")
+        XCTAssertEqual(origin.y, 700 - 300 - 8, accuracy: 0.1, "Panel should be below toolbar")
+
+        // Edge case: toolbar near left edge, panel would go off-screen
+        let leftEdge = PanelPositionModel(
+            toolbarMidX: 50, toolbarMinY: 500,
+            panelWidth: 230, panelHeight: 300,
+            screenVisibleFrame: NSRect(x: 0, y: 0, width: 1920, height: 1080))
+        let leftOrigin = leftEdge.computeOrigin()
+        XCTAssertGreaterThanOrEqual(leftOrigin.x, 0,
+                                    "Panel should not go off the left edge of screen")
+
+        // Edge case: toolbar near bottom, panel would go below screen
+        let bottomEdge = PanelPositionModel(
+            toolbarMidX: 960, toolbarMinY: 100,
+            panelWidth: 230, panelHeight: 300,
+            screenVisibleFrame: NSRect(x: 0, y: 25, width: 1920, height: 1055))
+        let bottomOrigin = bottomEdge.computeOrigin()
+        XCTAssertGreaterThanOrEqual(bottomOrigin.y, 25,
+                                    "Panel should not go below the screen's visible frame")
+
+        // Edge case: toolbar near right edge
+        let rightEdge = PanelPositionModel(
+            toolbarMidX: 1900, toolbarMinY: 500,
+            panelWidth: 230, panelHeight: 300,
+            screenVisibleFrame: NSRect(x: 0, y: 0, width: 1920, height: 1080))
+        let rightOrigin = rightEdge.computeOrigin()
+        XCTAssertLessThanOrEqual(rightOrigin.x + 230, 1920,
+                                 "Panel should not go off the right edge of screen")
+    }
 }

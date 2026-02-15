@@ -172,6 +172,7 @@ class SelectionView: NSView {
     private var coordLayer: CATextLayer?
     private var coordBgLayer: CALayer?
     private var crosshairCursor: NSCursor?
+    private var lastCrosshairCoordKey: String?
 
     // Custom diagonal resize cursors (macOS has no native ones)
     private lazy var nwseResizeCursor: NSCursor = {
@@ -393,7 +394,12 @@ class SelectionView: NSView {
     private func updateCursorWithCoords(_ point: NSPoint) {
         // Guard against calling from contexts where font operations may crash
         guard let _ = window else { return }
-        buildCrosshairCursor(at: point)
+        // Only rebuild when integer coords change (sub-pixel moves reuse the cached cursor)
+        let key = "\(Int(point.x)), \(Int(point.y))"
+        if key != lastCrosshairCoordKey {
+            lastCrosshairCoordKey = key
+            buildCrosshairCursor(at: point)
+        }
         crosshairCursor?.set()
     }
 
@@ -1888,6 +1894,17 @@ class SelectionView: NSView {
     private var lockedTextPopoverRect: NSRect?
     private let fontSizePresets: [CGFloat] = [16, 24, 36, 48, 72]
 
+    // Cached shortcut label sizes — static strings measured once
+    private static let shortcutLabelFont = NSFont.systemFont(ofSize: 9, weight: .medium)
+    private static let shortcutLabelSizes: [String: NSSize] = {
+        let attrs: [NSAttributedString.Key: Any] = [.font: shortcutLabelFont, .foregroundColor: NSColor.white]
+        var cache: [String: NSSize] = [:]
+        for label in ["Tab", "S", "R", "A", "T"] {
+            cache[label] = label.size(withAttributes: attrs)
+        }
+        return cache
+    }()
+
     private var isTextModeActive: Bool {
         currentMode == .text || editingTextAnnotation != nil
     }
@@ -2263,12 +2280,13 @@ class SelectionView: NSView {
                 }
             }
 
-            // Draw shortcut label below icon
+            // Draw shortcut label below icon (sizes cached — static strings)
             let shortcutAttrs: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 9, weight: .medium),
+                .font: SelectionView.shortcutLabelFont,
                 .foregroundColor: isActive ? NSColor.white : NSColor.white.withAlphaComponent(0.4)
             ]
-            let shortcutSize = button.shortcut.size(withAttributes: shortcutAttrs)
+            let shortcutSize = SelectionView.shortcutLabelSizes[button.shortcut]
+                ?? button.shortcut.size(withAttributes: shortcutAttrs)
             let shortcutPoint = NSPoint(
                 x: btnRect.midX - shortcutSize.width / 2,
                 y: btnRect.minY + 3
@@ -3295,15 +3313,13 @@ class SelectionView: NSView {
     }
 
     private func syncAnnotationLayers() {
-        // Remove old layers
-        for (id, layer) in annotationLayers {
-            if !annotations.contains(where: { $0.id == id }) {
-                layer.removeFromSuperlayer()
-                annotationLayers.removeValue(forKey: id)
-                // Also remove arrowhead layer if exists
-                arrowHeadLayers[id]?.removeFromSuperlayer()
-                arrowHeadLayers.removeValue(forKey: id)
-            }
+        // Remove stale layers using Set difference (avoids O(n×m) nested contains)
+        let currentIDs = Set(annotations.map { $0.id })
+        for id in Set(annotationLayers.keys).subtracting(currentIDs) {
+            annotationLayers[id]?.removeFromSuperlayer()
+            annotationLayers.removeValue(forKey: id)
+            arrowHeadLayers[id]?.removeFromSuperlayer()
+            arrowHeadLayers.removeValue(forKey: id)
         }
 
         // Add/update layers for current annotations

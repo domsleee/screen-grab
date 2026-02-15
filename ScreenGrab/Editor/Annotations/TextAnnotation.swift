@@ -4,13 +4,15 @@ import AppKit
 
 class TextAnnotation: Annotation {
     let id: UUID
-    var text: String
+    var text: String { didSet { cachedTextSize = nil } }
     var position: CGPoint
-    var fontSize: CGFloat
+    var fontSize: CGFloat { didSet { if fontSize != oldValue { cachedTextSize = nil; cachedFont = nil } } }
     var color: CGColor
     var backgroundColor: CGColor?
     var backgroundPadding: CGFloat
     var strokeWidth: CGFloat // unused but required by protocol
+    private var cachedTextSize: CGSize?
+    private var cachedFont: NSFont?
 
     var bounds: CGRect {
         get {
@@ -97,20 +99,30 @@ class TextAnnotation: Annotation {
         return nil
     }
 
+    private func font() -> NSFont {
+        if let cached = cachedFont { return cached }
+        let f = NSFont.systemFont(ofSize: fontSize, weight: .bold)
+        cachedFont = f
+        return f
+    }
+
     func textAttributes() -> [NSAttributedString.Key: Any] {
         return [
-            .font: NSFont.systemFont(ofSize: fontSize, weight: .bold),
+            .font: font(),
             .foregroundColor: NSColor(cgColor: color) ?? NSColor.red
         ]
     }
 
     func textSize() -> CGSize {
-        guard !text.isEmpty else {
-            // Return a minimum size for the cursor/caret area
-            let font = NSFont.systemFont(ofSize: fontSize, weight: .bold)
-            return CGSize(width: 2, height: font.ascender - font.descender)
+        if let cached = cachedTextSize { return cached }
+        let size: CGSize
+        if text.isEmpty {
+            let f = font()
+            size = CGSize(width: 2, height: f.ascender - f.descender)
+        } else {
+            size = (text as NSString).size(withAttributes: textAttributes())
         }
-        let attrs = textAttributes()
-        return (text as NSString).size(withAttributes: attrs)
+        cachedTextSize = size
+        return size
     }
 }

@@ -180,12 +180,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let commitHash = Bundle.main.infoDictionary?["GitCommitHash"] as? String ?? "unknown"
         let commitDate = Bundle.main.infoDictionary?["GitCommitDate"] as? String ?? ""
         let buildText = NSMutableAttributedString()
-        let commitURL = URL(string: "\(Self.repoURL)/commit/\(commitHash)")!
-        let linkAttrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular),
-            .link: commitURL,
-        ]
-        buildText.append(NSAttributedString(string: commitHash, attributes: linkAttrs))
+        if let commitURL = URL(string: "\(Self.repoURL)/commit/\(commitHash)") {
+            let linkAttrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular),
+                .link: commitURL,
+            ]
+            buildText.append(NSAttributedString(string: commitHash, attributes: linkAttrs))
+        } else {
+            let plainAttrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular),
+            ]
+            buildText.append(NSAttributedString(string: commitHash, attributes: plainAttrs))
+        }
         if !commitDate.isEmpty {
             let dateAttrs: [NSAttributedString.Key: Any] = [
                 .font: NSFont.systemFont(ofSize: 11),
@@ -203,11 +209,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // GitHub repo link
         let repoText = NSMutableAttributedString()
-        let repoLinkAttrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 11),
-            .link: URL(string: Self.repoURL)!,
-        ]
-        repoText.append(NSAttributedString(string: Self.repoURL.replacingOccurrences(of: "https://", with: ""), attributes: repoLinkAttrs))
+        let repoDisplayText = Self.repoURL.replacingOccurrences(of: "https://", with: "")
+        if let repoURL = URL(string: Self.repoURL) {
+            let repoLinkAttrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 11),
+                .link: repoURL,
+            ]
+            repoText.append(NSAttributedString(string: repoDisplayText, attributes: repoLinkAttrs))
+        } else {
+            repoText.append(NSAttributedString(string: repoDisplayText, attributes: [
+                .font: NSFont.systemFont(ofSize: 11),
+            ]))
+        }
         let repoField = NSTextField(labelWithString: "")
         repoField.attributedStringValue = repoText
         repoField.allowsEditingTextAttributes = true
@@ -286,7 +299,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
                     var response = alert.runModal()
                     while response == .alertFirstButtonReturn {
-                        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
+                        if let prefsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+                            NSWorkspace.shared.open(prefsURL)
+                        }
                         // Show the same dialog again so user can click Relaunch when ready
                         response = alert.runModal()
                     }

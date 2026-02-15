@@ -7,6 +7,9 @@ class ScreenCaptureManager {
     private var previousApp: NSRunningApplication?
     private var previewWindow: ScreenshotPreviewWindow?
 
+    private static let captureSoundURL = URL(fileURLWithPath:
+        "/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/system/Screen Capture.aif")
+
     private static let timestampFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd_HH-mm-ss-SSS"
@@ -86,7 +89,7 @@ class ScreenCaptureManager {
 
             // Play capture sound
             if AppSettings.shared.playSound {
-                let sound = NSSound(contentsOf: URL(fileURLWithPath: "/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/system/Screen Capture.aif"), byReference: true) ?? NSSound(named: .init("Tink"))
+                let sound = NSSound(contentsOf: Self.captureSoundURL, byReference: true) ?? NSSound(named: .init("Tink"))
                 sound?.play()
             }
 

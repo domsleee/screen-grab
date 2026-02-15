@@ -50,7 +50,12 @@ final class Logger {
         let logsDir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Logs/ScreenGrab")
 
-        try? FileManager.default.createDirectory(at: logsDir, withIntermediateDirectories: true)
+        do {
+            try FileManager.default.createDirectory(at: logsDir, withIntermediateDirectories: true)
+        } catch {
+            print("[ScreenGrab Logger] Failed to create log directory: \(error)")
+            return
+        }
 
         // Log file with date
         let today = DateFormatter()
@@ -61,10 +66,17 @@ final class Logger {
         // Create file if needed and open for appending
         if let url = logFileURL {
             if !FileManager.default.fileExists(atPath: url.path) {
-                FileManager.default.createFile(atPath: url.path, contents: nil)
+                if !FileManager.default.createFile(atPath: url.path, contents: nil) {
+                    print("[ScreenGrab Logger] Failed to create log file at \(url.path)")
+                    return
+                }
             }
-            fileHandle = try? FileHandle(forWritingTo: url)
-            fileHandle?.seekToEndOfFile()
+            do {
+                fileHandle = try FileHandle(forWritingTo: url)
+                fileHandle?.seekToEndOfFile()
+            } catch {
+                print("[ScreenGrab Logger] Failed to open log file: \(error)")
+            }
         }
     }
 

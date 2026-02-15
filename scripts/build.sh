@@ -66,6 +66,6 @@ else
 fi
 
 echo "Signing with identity: $SIGN_IDENTITY"
-codesign --force --deep --sign "$SIGN_IDENTITY" ScreenGrab.app
+codesign --force --deep --sign "$SIGN_IDENTITY" --options runtime ScreenGrab.app
 
 echo "Done! Run with: open ScreenGrab.app"

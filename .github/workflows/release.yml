@@ -74,10 +74,10 @@ jobs:
             version "${VERSION}"
             sha256 "${SHA256}"
 
-            url "https://github.com/domsleee/screen-grab/releases/download/${TAG}/ScreenGrab-${TAG}.zip"
+            url "https://github.com/domsleee/ScreenGrab/releases/download/${TAG}/ScreenGrab-${TAG}.zip"
             name "ScreenGrab"
             desc "ShareX-like screen capture for macOS"
-            homepage "https://github.com/domsleee/screen-grab"
+            homepage "https://github.com/domsleee/ScreenGrab"
 
             depends_on macos: ">= :ventura"
 

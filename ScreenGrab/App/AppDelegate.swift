@@ -107,7 +107,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.makeKeyAndOrderFront(nil)
     }
 
-    private static let repoURL = "https://github.com/domsleee/screen-grab"
+    private static let repoURL = "https://github.com/domsleee/ScreenGrab"
 
     @objc func showAbout() {
         if let existing = aboutWindow, existing.isVisible {
@@ -257,42 +257,39 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func requestScreenRecordingPermission() {
-        // Registers the app in System Settings → Screen Recording list
         if CGPreflightScreenCaptureAccess() {
             logInfo("Screen recording permission already granted")
             return
         }
-        CGRequestScreenCaptureAccess()
 
-        // Temporarily become regular app so permission dialog stays open
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
-
+        // CGPreflightScreenCaptureAccess returns false with trusted self-signed certs
+        // even when captures work. Use SCShareableContent as the real test.
         Task {
             do {
-                let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-                logInfo("Screen recording permission granted, found \(content.displays.count) displays")
-                await MainActor.run {
-                    NSApp.setActivationPolicy(.accessory)
-                }
+                _ = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+                logInfo("Screen recording permission verified")
             } catch {
-                logError("Screen recording permission denied or error: \(error)")
-
+                logError("Screen recording permission denied: \(error)")
                 await MainActor.run {
+                    NSApp.setActivationPolicy(.regular)
+                    NSApp.activate(ignoringOtherApps: true)
+
                     let alert = NSAlert()
                     alert.messageText = "Screen Recording Permission Required"
-                    alert.informativeText = "ScreenGrab needs Screen Recording permission. " +
-                        "Please enable it in System Settings → Privacy & Security → Screen Recording, then relaunch."
+                    alert.informativeText = "ScreenGrab needs Screen Recording permission to capture your screen.\n\n" +
+                        "Open System Settings, enable ScreenGrab under Screen Recording, then click Relaunch."
                     alert.alertStyle = .warning
                     alert.addButton(withTitle: "Open System Settings")
                     alert.addButton(withTitle: "Relaunch")
                     alert.addButton(withTitle: "Quit")
 
-                    let response = alert.runModal()
-                    if response == .alertFirstButtonReturn {
+                    var response = alert.runModal()
+                    while response == .alertFirstButtonReturn {
                         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
-                        NSApp.terminate(nil)
-                    } else if response == .alertSecondButtonReturn {
+                        // Show the same dialog again so user can click Relaunch when ready
+                        response = alert.runModal()
+                    }
+                    if response == .alertSecondButtonReturn {
                         self.relaunchApp()
                     } else {
                         NSApp.terminate(nil)
@@ -303,9 +300,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func relaunchApp() {
-        let bundlePath = Bundle.main.bundlePath
-        logInfo("Relaunching from: \(bundlePath)")
-        let url = URL(fileURLWithPath: bundlePath)
+        let url = URL(fileURLWithPath: Bundle.main.bundlePath)
+        logInfo("Relaunching from: \(url.path)")
         let config = NSWorkspace.OpenConfiguration()
         config.createsNewApplicationInstance = true
         NSWorkspace.shared.openApplication(at: url, configuration: config) { _, error in

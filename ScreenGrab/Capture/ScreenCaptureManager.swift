@@ -6,6 +6,7 @@ class ScreenCaptureManager {
     private var overlayWindows: [SelectionOverlayWindow] = []
     private var previousApp: NSRunningApplication?
     private var previewWindow: ScreenshotPreviewWindow?
+    private var isCapturing = false
 
     private static let captureSoundURL = URL(fileURLWithPath:
         "/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/system/Screen Capture.aif")
@@ -17,6 +18,13 @@ class ScreenCaptureManager {
     }()
 
     func startCapture() {
+        // Prevent re-entrant captures — covers both overlay phase and post-selection capture
+        if isCapturing {
+            logDebug("Capture already in progress, ignoring")
+            return
+        }
+        isCapturing = true
+
         // Close any existing overlays
         closeOverlays()
 
@@ -31,6 +39,7 @@ class ScreenCaptureManager {
             }
             overlayWindow.onCancel = { [weak self] in
                 self?.closeOverlays()
+                self?.isCapturing = false
             }
             overlayWindows.append(overlayWindow)
             overlayWindow.show()
@@ -99,6 +108,7 @@ class ScreenCaptureManager {
             }
         }
 
+        isCapturing = false
         cleanupOverlays()
     }
 
@@ -121,7 +131,7 @@ class ScreenCaptureManager {
         // Generate filename with timestamp (millisecond precision to avoid collisions)
         let timestamp = Self.timestampFormatter.string(from: Date())
         let filename = "ScreenGrab_\(timestamp).png"
-        let filePath = (savePath as NSString).appendingPathComponent(filename)
+        let filePath = URL(fileURLWithPath: savePath).appendingPathComponent(filename).path
 
         // Write PNG data
         guard let tiffData = image.tiffRepresentation,

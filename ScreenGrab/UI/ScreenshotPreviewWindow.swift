@@ -20,9 +20,10 @@ class ScreenshotPreviewWindow: NSPanel {
         self.filePath = filePath
 
         // Calculate thumbnail size maintaining aspect ratio
-        let aspect = image.size.height / image.size.width
         let thumbWidth = Self.thumbnailMaxWidth
-        let thumbHeight = thumbWidth * aspect
+        let thumbHeight = image.size.width > 0
+            ? thumbWidth * (image.size.height / image.size.width)
+            : thumbWidth
 
         let contentSize = NSSize(width: thumbWidth, height: thumbHeight)
 
@@ -72,10 +73,10 @@ class ScreenshotPreviewWindow: NSPanel {
 
         // Slide in
         let finalX = visibleFrame.maxX - thumbWidth - Self.padding
-        NSAnimationContext.runAnimationGroup { ctx in
+        NSAnimationContext.runAnimationGroup { [weak self] ctx in
             ctx.duration = Self.animationDuration
             ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            self.animator().setFrame(
+            self?.animator().setFrame(
                 NSRect(x: finalX, y: startY, width: thumbWidth, height: thumbHeight),
                 display: true
             )
@@ -109,10 +110,9 @@ class ScreenshotPreviewWindow: NSPanel {
             isDragging = true
         }
         if isDragging {
-            // Move window with drag
             var origin = self.frame.origin
-            origin.x += dx
-            origin.y += dy
+            origin.x += event.deltaX
+            origin.y -= event.deltaY
             self.setFrameOrigin(origin)
         }
     }

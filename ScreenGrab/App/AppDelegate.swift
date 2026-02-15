@@ -301,6 +301,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func relaunchApp() {
         let url = URL(fileURLWithPath: Bundle.main.bundlePath)
+        logInfo("Relaunching from: \(url.path)")
         let config = NSWorkspace.OpenConfiguration()
         config.createsNewApplicationInstance = true
         NSWorkspace.shared.openApplication(at: url, configuration: config) { _, error in

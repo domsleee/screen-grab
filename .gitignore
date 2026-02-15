@@ -28,6 +28,7 @@ DerivedData/
 # Build artifacts
 ScreenGrab.app/Contents/MacOS/
 ScreenGrab.app/Contents/_CodeSignature/
+ScreenGrab.app/Contents/Info.plist
 
 # IDE
 .idea/
